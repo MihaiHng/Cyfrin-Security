@@ -1,7 +1,7 @@
 ---
 title: Puppy Raffle Audit Report
 author: mhng
-date: September 3, 2025
+date: September 5, 2025
 header-includes:
   - \usepackage{titling}
   - \usepackage{graphicx}
