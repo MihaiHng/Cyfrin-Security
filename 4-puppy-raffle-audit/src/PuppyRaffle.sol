@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MIT
+// @audit-info Use of floating pragma is not recommended
+// @audit-info Why use 0.7.*? It's old => causes issues(ex. overflow finding)
 pragma solidity ^0.7.6;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -21,6 +23,7 @@ contract PuppyRaffle is ERC721, Ownable {
     uint256 public immutable entranceFee;
 
     address[] public players;
+    // @audit-info This variable should be immutable because it never changes => saves gas
     uint256 public raffleDuration;
     uint256 public raffleStartTime;
     address public previousWinner;
@@ -35,18 +38,21 @@ contract PuppyRaffle is ERC721, Ownable {
     mapping(uint256 => string) public rarityToName;
 
     // Stats for the common puppy (pug)
+    // @audit-info Gas: Should be constant
     string private commonImageUri =
         "ipfs://QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8";
     uint256 public constant COMMON_RARITY = 70;
     string private constant COMMON = "common";
 
     // Stats for the rare puppy (st. bernard)
+    // @audit-info Gas: Should be constant
     string private rareImageUri =
         "ipfs://QmUPjADFGEKmfohdTaNcWhp7VGk26h5jXDA7v3VtTnTLcW";
     uint256 public constant RARE_RARITY = 25;
     string private constant RARE = "rare";
 
     // Stats for the legendary puppy (shiba inu)
+    // @audit-info Gas: Should be constant
     string private legendaryImageUri =
         "ipfs://QmYx6GsYAKnNzZ9A6NvEKV9nf1VaDzJrqDR23Y8YSkebLU";
     uint256 public constant LEGENDARY_RARITY = 5;
@@ -89,11 +95,14 @@ contract PuppyRaffle is ERC721, Ownable {
             "PuppyRaffle: Must send enough to enter raffle"
         );
         for (uint256 i = 0; i < newPlayers.length; i++) {
+            // @remind q What resets the player array?
             players.push(newPlayers[i]);
         }
 
         // Check for duplicates
         // @audit DoS
+        // @audit-info Gas: Cache array length, loop reads from storage => expensive
+        // uint256 playersLength = players.length;
         for (uint256 i = 0; i < players.length - 1; i++) {
             for (uint256 j = i + 1; j < players.length; j++) {
                 require(
@@ -153,6 +162,7 @@ contract PuppyRaffle is ERC721, Ownable {
             "PuppyRaffle: Raffle not over"
         );
         require(players.length >= 4, "PuppyRaffle: Need at least 4 players");
+        // @audit Weak randomness
         uint256 winnerIndex = uint256(
             keccak256(
                 abi.encodePacked(msg.sender, block.timestamp, block.difficulty)
@@ -160,8 +170,10 @@ contract PuppyRaffle is ERC721, Ownable {
         ) % players.length;
         address winner = players[winnerIndex];
         uint256 totalAmountCollected = players.length * entranceFee;
+        // @audit-info Magic numbers not recommended
         uint256 prizePool = (totalAmountCollected * 80) / 100;
         uint256 fee = (totalAmountCollected * 20) / 100;
+        // @audit Overflow
         totalFees = totalFees + uint64(fee);
 
         uint256 tokenId = totalSupply();
@@ -189,6 +201,7 @@ contract PuppyRaffle is ERC721, Ownable {
     /// @notice this function will withdraw the fees to the feeAddress
     function withdrawFees() external {
         require(
+            // @audit Mishandling of ETH
             address(this).balance == uint256(totalFees),
             "PuppyRaffle: There are currently players active!"
         );
@@ -206,6 +219,7 @@ contract PuppyRaffle is ERC721, Ownable {
     }
 
     /// @notice this function will return true if the msg.sender is an active player
+    // @audit This isn't used anywhere I/G
     function _isActivePlayer() internal view returns (bool) {
         for (uint256 i = 0; i < players.length; i++) {
             if (players[i] == msg.sender) {

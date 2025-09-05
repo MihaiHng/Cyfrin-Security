@@ -73,8 +73,8 @@ We use the [CodeHawks](https://docs.codehawks.com/hawks-auditors/how-to-evaluate
 # Executive Summary
 ## Issues found
 # Findings
-# High
-# Medium
-# Low 
-# Informational
-# Gas 
+## High
+## Medium
+## Low 
+## Informational
+## Gas 
