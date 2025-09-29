@@ -13,3 +13,6 @@
 [submodule "sc-exploits-minimized/lib/kontrol-cheatcodes"]
 	path = sc-exploits-minimized/lib/kontrol-cheatcodes
 	url = https://github.com/runtimeverification/kontrol-cheatcodes
+[submodule "Exercises/Registry-Fuzzing/lib/forge-std"]
+	path = Exercises/Registry-Fuzzing/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
