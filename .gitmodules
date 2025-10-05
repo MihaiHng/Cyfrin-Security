@@ -16,3 +16,9 @@
 [submodule "Exercises/Registry-Fuzzing/lib/forge-std"]
 	path = Exercises/Registry-Fuzzing/lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "7-boss-bridge-audit/lib/forge-std"]
+	path = 7-boss-bridge-audit/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "7-boss-bridge-audit/lib/openzeppelin-contracts"]
+	path = 7-boss-bridge-audit/lib/openzeppelin-contracts
+	url = https://github.com/openzeppelin/openzeppelin-contracts
