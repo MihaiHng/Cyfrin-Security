@@ -1,7 +1,7 @@
 ---
 title: Boss Bridge Audit Report
 author: mhng
-date: October 5, 2025
+date: October 7, 2025
 header-includes:
   - \usepackage{titling}
   - \usepackage{graphicx}
@@ -42,7 +42,7 @@ Assisting Auditors:
 
 - [Boss Bridge Audit Report](#boss-bridge-audit-report)
 - [Table of contents](#table-of-contents)
-- [About YOUR\_NAME\_HERE](#about-your_name_here)
+- [About mhng](#about-mhng)
 - [Disclaimer](#disclaimer)
 - [Risk Classification](#risk-classification)
 - [Audit Details](#audit-details)
@@ -113,7 +113,7 @@ The Boss Bridge is a bridging mechanism to move an ERC20 token (the "Boss Bridge
 
 The bridge is intended to allow users to deposit tokens, which are to be held in a vault contract on L1. Successful deposits should trigger an event that an off-chain mechanism is in charge of detecting to mint the corresponding tokens on the L2 side of the bridge.
 
-Withdrawals must be approved operators (or "signers"). Essentially they are expected to be one or more off-chain services where users request withdrawals, and that should verify requests before signing the data users must use to withdraw their tokens. It's worth highlighting that there's little-to-no on-chain mechanism to verify withdrawals, other than the operator's signature. So the Boss Bridge heavily relies on having robust, reliable and always available operators to approve withdrawals. Any rogue operator or compromised signing key may put at risk the entire protocol.
+Withdrawals must be approved by operators (or "signers"). Essentially there are expected to be one or more off-chain services where users request withdrawals, and that should verify requests before signing the data users must use to withdraw their tokens. It's worth highlighting that there's little-to-no on-chain mechanism to verify withdrawals, other than the operator's signature. So the Boss Bridge heavily relies on having robust, reliable and always available operators to approve withdrawals. Any rogue operator or compromised signing key may put at risk the entire protocol.
 
 ## Roles
 
@@ -138,7 +138,7 @@ Withdrawals must be approved operators (or "signers"). Essentially they are expe
 
 ## High 
 
-### [H-1] Users who give tokens approvals to `L1BossBridge` may have those assest stolen
+### [H-1] Users who give tokens approvals to `L1BossBridge` may have those assets stolen
 
 **Description:** The `depositTokensToL2` function allows anyone to call it with a `from` address of any account that has approved tokens to the bridge.
 
@@ -258,7 +258,7 @@ function testCanReplayWithdrawals() public {
 
 It's worth noting that this attack's likelihood depends on the level of sophistication of the off-chain validations implemented by the operators that approve and sign withdrawals. However, we're rating it as a High severity issue because, according to the available documentation, the only validation made by off-chain services is that "the account submitting the withdrawal has first originated a successful deposit in the L1 part of the bridge". As the next PoC shows, such validation is not enough to prevent the attack.
 
-**Proof of Concept:** To reproduce, i****nclude the following test in the `L1BossBridge.t.sol` file:
+**Proof of Concept:** Include the following test in the `L1BossBridge.t.sol` file:
 
 ```javascript
 function testCanCallVaultApproveFromBridgeAndDrainVault() public {
@@ -319,8 +319,6 @@ if (token.balanceOf(address(vault)) + amount > DEPOSIT_LIMIT) {
         }
 ```
 
-https://github.com/Cyfrin/2023-11-Boss-Bridge/blob/1b33f63aef5b6b06acd99d49da65e1c71b40a4f7/src/L1BossBridge.sol#L71
-
 The problem is that it uses the contract balance to track this invariant, opening the door for a malicious actor to make a donation to the vault contract to ensure that the deposit limit is reached causing a potential victim's harmless deposit to unexpectedly revert.
 
 **Impact:** Users will not be able to deposit token to the bridge 
@@ -364,12 +362,13 @@ function testUserCannotDepositBeyondLimit() public {
 
 **Proof of Concept:** 
 
-Steps:
-- Attacker deposits 1 wei (or 0 wei) into the L2 bridge.
-- Attacker crafts and encodes a  malicious message and submits it to the `operator` to be signed by him. The malicious message has `amount` field set to a high value, like the total funds available in the `vault`.
-- Since the attacker had deposited 1 wei, operator approves & signs the message, not knowing the contents of it since it is encoded.
-- Attacker calls `withdrawTokensToL1()`. 
-- All vault's funds are transferred to the attacker.
+Steps
+
+1. Attacker deposits `1 wei` (or `0 wei`) into the L2 bridge.  
+2. Attacker crafts and encodes a malicious message and submits it to the `operator` to be signed. The malicious message has the `amount` field set to a high value (e.g. the total funds available in the `vault`).  
+3. Because the attacker had deposited `1 wei`, the `operator` approves & signs the message, not knowing the contents since it is encoded.  
+4. Attacker calls `withdrawTokensToL1()`.  
+5. All of the `vault`'s funds are transferred to the attacker.
 
 ```javascript
     function test_CanWithdrawEntireVaultBalance() public {
