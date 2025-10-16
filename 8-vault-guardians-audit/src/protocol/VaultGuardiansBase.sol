@@ -43,9 +43,17 @@ import {VaultGuardianToken} from "../dao/VaultGuardianToken.sol";
 contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     using SafeERC20 for IERC20;
 
-    error VaultGuardiansBase__NotEnoughWeth(uint256 amount, uint256 amountNeeded);
-    error VaultGuardiansBase__NotAGuardian(address guardianAddress, IERC20 token);
-    error VaultGuardiansBase__CantQuitGuardianWithNonWethVaults(address guardianAddress);
+    error VaultGuardiansBase__NotEnoughWeth(
+        uint256 amount,
+        uint256 amountNeeded
+    );
+    error VaultGuardiansBase__NotAGuardian(
+        address guardianAddress,
+        IERC20 token
+    );
+    error VaultGuardiansBase__CantQuitGuardianWithNonWethVaults(
+        address guardianAddress
+    );
     error VaultGuardiansBase__CantQuitWethWithThisFunction();
     error VaultGuardiansBase__TransferFailed();
     error VaultGuardiansBase__FeeTooSmall(uint256 fee, uint256 requiredFee);
@@ -62,6 +70,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     address private immutable i_uniswapV2Router;
     VaultGuardianToken private immutable i_vgToken;
 
+    // @audit-info - Unused state variable
     uint256 private constant GUARDIAN_FEE = 0.1 ether;
 
     // DAO updatable values
@@ -69,7 +78,8 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     uint256 internal s_guardianAndDaoCut = 1000;
 
     // The guardian's address mapped to the asset, mapped to the allocation data
-    mapping(address guardianAddress => mapping(IERC20 asset => IVaultShares vaultShares)) private s_guardians;
+    mapping(address guardianAddress => mapping(IERC20 asset => IVaultShares vaultShares))
+        private s_guardians;
     mapping(address token => bool approved) private s_isApprovedToken;
 
     /*//////////////////////////////////////////////////////////////
@@ -77,9 +87,20 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     //////////////////////////////////////////////////////////////*/
     event GuardianAdded(address guardianAddress, IERC20 token);
     event GaurdianRemoved(address guardianAddress, IERC20 token);
-    event InvestedInGuardian(address guardianAddress, IERC20 token, uint256 amount);
-    event DinvestedFromGuardian(address guardianAddress, IERC20 token, uint256 amount);
-    event GuardianUpdatedHoldingAllocation(address guardianAddress, IERC20 token);
+    event InvestedInGuardian(
+        address guardianAddress,
+        IERC20 token,
+        uint256 amount
+    );
+    event DinvestedFromGuardian(
+        address guardianAddress,
+        IERC20 token,
+        uint256 amount
+    );
+    event GuardianUpdatedHoldingAllocation(
+        address guardianAddress,
+        IERC20 token
+    );
 
     /*//////////////////////////////////////////////////////////////
                                MODIFIERS
@@ -117,24 +138,27 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     /*
      * @notice allows a user to become a guardian
      * @notice they have to send an ETH amount equal to the fee, and a WETH amount equal to the stake price
-     * 
+     *
      * @param wethAllocationData the allocation data for the WETH vault
      */
-    function becomeGuardian(AllocationData memory wethAllocationData) external returns (address) {
-        VaultShares wethVault =
-        new VaultShares(IVaultShares.ConstructorData({
-            asset: i_weth,
-            vaultName: WETH_VAULT_NAME,
-            vaultSymbol: WETH_VAULT_SYMBOL,
-            guardian: msg.sender,
-            allocationData: wethAllocationData,
-            aavePool: i_aavePool,
-            uniswapRouter: i_uniswapV2Router,
-            guardianAndDaoCut: s_guardianAndDaoCut,
-            vaultGuardians: address(this),
-            weth: address(i_weth),
-            usdc: address(i_tokenOne)
-        }));
+    function becomeGuardian(
+        AllocationData memory wethAllocationData
+    ) external returns (address) {
+        VaultShares wethVault = new VaultShares(
+            IVaultShares.ConstructorData({
+                asset: i_weth,
+                vaultName: WETH_VAULT_NAME,
+                vaultSymbol: WETH_VAULT_SYMBOL,
+                guardian: msg.sender,
+                allocationData: wethAllocationData,
+                aavePool: i_aavePool,
+                uniswapRouter: i_uniswapV2Router,
+                guardianAndDaoCut: s_guardianAndDaoCut,
+                vaultGuardians: address(this),
+                weth: address(i_weth),
+                usdc: address(i_tokenOne)
+            })
+        );
         return _becomeTokenGuardian(i_weth, wethVault);
     }
 
@@ -144,43 +168,44 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * @param allocationData A struct indicating the ratio of asset tokens to hold, invest in Aave and Uniswap (based on Vault Guardian strategy)
      * @param token The token to become a Vault Guardian for
      */
-    function becomeTokenGuardian(AllocationData memory allocationData, IERC20 token)
-        external
-        onlyGuardian(i_weth)
-        returns (address)
-    {
+    function becomeTokenGuardian(
+        AllocationData memory allocationData,
+        IERC20 token
+    ) external onlyGuardian(i_weth) returns (address) {
         //slither-disable-next-line uninitialized-local
         VaultShares tokenVault;
         if (address(token) == address(i_tokenOne)) {
-            tokenVault =
-            new VaultShares(IVaultShares.ConstructorData({
-                asset: token,
-                vaultName: TOKEN_ONE_VAULT_NAME,
-                vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
-                guardian: msg.sender,
-                allocationData: allocationData,
-                aavePool: i_aavePool,
-                uniswapRouter: i_uniswapV2Router,
-                guardianAndDaoCut: s_guardianAndDaoCut,
-                vaultGuardians: address(this),
-                weth: address(i_weth),
-                usdc: address(i_tokenOne)
-            }));
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    vaultName: TOKEN_ONE_VAULT_NAME,
+                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+            );
         } else if (address(token) == address(i_tokenTwo)) {
-            tokenVault =
-            new VaultShares(IVaultShares.ConstructorData({
-                asset: token,
-                vaultName: TOKEN_ONE_VAULT_NAME,
-                vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
-                guardian: msg.sender,
-                allocationData: allocationData,
-                aavePool: i_aavePool,
-                uniswapRouter: i_uniswapV2Router,
-                guardianAndDaoCut: s_guardianAndDaoCut,
-                vaultGuardians: address(this),
-                weth: address(i_weth),
-                usdc: address(i_tokenOne)
-            }));
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    vaultName: TOKEN_ONE_VAULT_NAME,
+                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+            );
         } else {
             revert VaultGuardiansBase__NotApprovedToken(address(token));
         }
@@ -205,7 +230,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * See VaultGuardiansBase::quitGuardian()
      * The only difference here, is that this function is for non-WETH vaults
      */
-    function quitGuardian(IERC20 token) external onlyGuardian(token) returns (uint256) {
+    function quitGuardian(
+        IERC20 token
+    ) external onlyGuardian(token) returns (uint256) {
         if (token == i_weth) {
             revert VaultGuardiansBase__CantQuitWethWithThisFunction();
         }
@@ -217,12 +244,14 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * @param token The token vault whose allocation ratio is to be updated
      * @param tokenAllocationData The new allocation data
      */
-    function updateHoldingAllocation(IERC20 token, AllocationData memory tokenAllocationData)
-        external
-        onlyGuardian(token)
-    {
+    function updateHoldingAllocation(
+        IERC20 token,
+        AllocationData memory tokenAllocationData
+    ) external onlyGuardian(token) {
         emit GuardianUpdatedHoldingAllocation(msg.sender, token);
-        s_guardians[msg.sender][token].updateHoldingAllocation(tokenAllocationData);
+        s_guardians[msg.sender][token].updateHoldingAllocation(
+            tokenAllocationData
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -242,7 +271,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         emit GaurdianRemoved(msg.sender, token);
         tokenVault.setNotActive();
         uint256 maxRedeemable = tokenVault.maxRedeem(msg.sender);
-        uint256 numberOfAssetsReturned = tokenVault.redeem(maxRedeemable, msg.sender, msg.sender);
+        uint256 numberOfAssetsReturned = tokenVault.redeem(
+            maxRedeemable,
+            msg.sender,
+            msg.sender
+        );
         return numberOfAssetsReturned;
     }
 
@@ -250,7 +283,9 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * @notice Checks if the vault guardian is owner of vaults other than WETH vaults
      * @param guardian the vault guardian
      */
-    function _guardianHasNonWethVaults(address guardian) private view returns (bool) {
+    function _guardianHasNonWethVaults(
+        address guardian
+    ) private view returns (bool) {
         if (address(s_guardians[guardian][i_tokenOne]) != address(0)) {
             return true;
         } else {
@@ -265,7 +300,10 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * @param token the token that the guardian will be guarding
      * @param tokenVault the vault that the guardian will be guarding
      */
-    function _becomeTokenGuardian(IERC20 token, VaultShares tokenVault) private returns (address) {
+    function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
         s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
         emit GuardianAdded(msg.sender, token);
         i_vgToken.mint(msg.sender, s_guardianStakePrice);
@@ -280,6 +318,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         }
         return address(tokenVault);
     }
+
     // slither-disable-end reentrancy-eth
 
     /*//////////////////////////////////////////////////////////////
@@ -294,7 +333,10 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
      * @param guardian the vault guardian
      * @param token the vault's underlying asset token
      */
-    function getVaultFromGuardianAndToken(address guardian, IERC20 token) external view returns (IVaultShares) {
+    function getVaultFromGuardianAndToken(
+        address guardian,
+        IERC20 token
+    ) external view returns (IVaultShares) {
         return s_guardians[guardian][token];
     }
 
