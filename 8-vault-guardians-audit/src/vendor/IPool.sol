@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// @audit Is this used anywhere?
-
 import {DataTypes} from "./DataTypes.sol";
 
 // A subset of the AaveV3 Pool interface
