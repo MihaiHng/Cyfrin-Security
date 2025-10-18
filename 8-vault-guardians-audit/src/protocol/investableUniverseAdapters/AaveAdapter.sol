@@ -22,6 +22,8 @@ contract AaveAdapter {
      * @param amount The amount of vault's underlying asset token to invest
      */
     function _aaveInvest(IERC20 asset, uint256 amount) internal {
+        // @audit-issue Unsafe approve pattern -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - AAVE is a trusted spender)
+        // asset.safeIncreaseAllowance(address(i_aavePool), amount);
         bool succ = asset.approve(address(i_aavePool), amount);
         if (!succ) {
             revert AaveAdapter__TransferFailed();
@@ -45,13 +47,13 @@ contract AaveAdapter {
         IERC20 token,
         uint256 amount
     ) internal returns (uint256 amountOfAssetReturned) {
-        i_aavePool.withdraw({
+        /* amountOfAssetReturned = */ i_aavePool.withdraw({
             asset: address(token),
             amount: amount,
             to: address(this)
         });
         // if (amountOfAssetReturned == 0) {
-        // revert AaveAdapter__NothingWithdrawn();
+        //   revert AaveAdapter__NothingWithdrawn();
         // }
         // return amountOfAssetReturned;
     }

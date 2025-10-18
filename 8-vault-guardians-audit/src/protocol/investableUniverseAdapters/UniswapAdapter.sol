@@ -16,12 +16,22 @@ contract UniswapAdapter is AStaticUSDCData {
 
     address[] private s_pathArray;
 
-    event UniswapInvested(uint256 tokenAmount, uint256 wethAmount, uint256 liquidity);
+    event UniswapInvested(
+        uint256 tokenAmount,
+        uint256 wethAmount,
+        uint256 liquidity
+    );
     event UniswapDivested(uint256 tokenAmount, uint256 wethAmount);
 
-    constructor(address uniswapRouter, address weth, address tokenOne) AStaticUSDCData(weth, tokenOne) {
+    constructor(
+        address uniswapRouter,
+        address weth,
+        address tokenOne
+    ) AStaticUSDCData(weth, tokenOne) {
         i_uniswapRouter = IUniswapV2Router01(uniswapRouter);
-        i_uniswapFactory = IUniswapV2Factory(IUniswapV2Router01(i_uniswapRouter).factory());
+        i_uniswapFactory = IUniswapV2Factory(
+            IUniswapV2Router01(i_uniswapRouter).factory()
+        );
     }
 
     // slither-disable-start reentrancy-eth
@@ -47,38 +57,61 @@ contract UniswapAdapter is AStaticUSDCData {
         // the element at index 1 is the address of the output token
         s_pathArray = [address(token), address(counterPartyToken)];
 
-        bool succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
+        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // token.safeIncreaseAllowance(address(i_uniswapRouter), amountOfTokenToSwap);
+        bool succ = token.approve(
+            address(i_uniswapRouter),
+            amountOfTokenToSwap
+        );
         if (!succ) {
             revert UniswapAdapter__TransferFailed();
         }
+
+        // @audit-issue Using `block.timestamp` for swap deadline offers no protection => should use a set time in the future, ex. block.timestamp + 300(5 min.)
+        // In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: amountOfTokenToSwap,
+            // @audit-issue No slippage protection => should use a slippage tolerance or let the user choose
             amountOutMin: 0,
             path: s_pathArray,
             to: address(this),
             deadline: block.timestamp
         });
 
+        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // token.safeIncreaseAllowance(address(i_uniswapRouter), amounts[1]);
         succ = counterPartyToken.approve(address(i_uniswapRouter), amounts[1]);
         if (!succ) {
             revert UniswapAdapter__TransferFailed();
         }
-        succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+
+        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // token.safeIncreaseAllowance(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
+        succ = token.approve(
+            address(i_uniswapRouter),
+            amountOfTokenToSwap + amounts[0]
+        );
         if (!succ) {
             revert UniswapAdapter__TransferFailed();
         }
 
         // amounts[1] should be the WETH amount we got back
-        (uint256 tokenAmount, uint256 counterPartyTokenAmount, uint256 liquidity) = i_uniswapRouter.addLiquidity({
-            tokenA: address(token),
-            tokenB: address(counterPartyToken),
-            amountADesired: amountOfTokenToSwap + amounts[0],
-            amountBDesired: amounts[1],
-            amountAMin: 0,
-            amountBMin: 0,
-            to: address(this),
-            deadline: block.timestamp
-        });
+        (
+            uint256 tokenAmount,
+            uint256 counterPartyTokenAmount,
+            uint256 liquidity
+        ) = i_uniswapRouter.addLiquidity({
+                tokenA: address(token),
+                tokenB: address(counterPartyToken),
+                amountADesired: amountOfTokenToSwap + amounts[0],
+                amountBDesired: amounts[1],
+                //
+                amountAMin: 0,
+                //
+                amountBMin: 0,
+                to: address(this),
+                deadline: block.timestamp
+            });
         emit UniswapInvested(tokenAmount, counterPartyTokenAmount, liquidity);
     }
 
@@ -88,21 +121,31 @@ contract UniswapAdapter is AStaticUSDCData {
      * @param token The vault's underlying asset token
      * @param liquidityAmount The amount of LP tokens to burn
      */
-    function _uniswapDivest(IERC20 token, uint256 liquidityAmount) internal returns (uint256 amountOfAssetReturned) {
+    function _uniswapDivest(
+        IERC20 token,
+        uint256 liquidityAmount
+    ) internal returns (uint256 amountOfAssetReturned) {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
 
-        (uint256 tokenAmount, uint256 counterPartyTokenAmount) = i_uniswapRouter.removeLiquidity({
-            tokenA: address(token),
-            tokenB: address(counterPartyToken),
-            liquidity: liquidityAmount,
-            amountAMin: 0,
-            amountBMin: 0,
-            to: address(this),
-            deadline: block.timestamp
-        });
+        (uint256 tokenAmount, uint256 counterPartyTokenAmount) = i_uniswapRouter
+            .removeLiquidity({
+                tokenA: address(token),
+                tokenB: address(counterPartyToken),
+                liquidity: liquidityAmount,
+                //
+                amountAMin: 0,
+                //
+                amountBMin: 0,
+                to: address(this),
+                deadline: block.timestamp
+            });
         s_pathArray = [address(counterPartyToken), address(token)];
+
+        // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+        // In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: counterPartyTokenAmount,
+            // @audit-issue No slippage protection => should use a slippage tolerance or let the user choose
             amountOutMin: 0,
             path: s_pathArray,
             to: address(this),
