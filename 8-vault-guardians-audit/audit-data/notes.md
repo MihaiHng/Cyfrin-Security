@@ -176,6 +176,10 @@ So it’s still best practice to always use SafeERC20 helpers for approvals.
 
 ### Issue: Using `block.timestamp` for swap deadline offers no protection => should use a set time in the future, ex. block.timestamp + 300(5 min.)
 
+Found in    `UniswapAdapter::addLiquidity`
+            `UniswapAdapter::removeLiquidity`
+            `UniswapAdapter::swapExactTokensForTokens`
+
 In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
 
 1. Use a future deadline window
@@ -361,4 +365,69 @@ Protects your vault or user funds from unexpected losses or MEV sandwich attacks
 ### Unchecked return value 
 
 
-### No explicit return, when compiled will return 0(because `amountOfAssetReturned` is not initialized) which is not good, check where _aaveDivest is used
+### No explicit return in ``AaveAdapter::_aaveDivest, when compiled will return 0(because `amountOfAssetReturned` is not initialized, which is not good, check where _aaveDivest is used
+
+
+## Issues - Manual Review
+
+### Unsafe 0 value => MEV, slippage beyound tolerance in `UniswapAdapter::addLiquidity` and `UniswapAdapter::removeLiquidity`
+
+Context: What amountAMin and amountBMin actually do When you call Uniswap’s addLiquidity(tokenA, tokenB, amountADesired, amountBDesired, amountAMin, amountBMin, to, deadline) you’re telling Uniswap:
+“I’d like to deposit up to amountADesired and amountBDesired,
+but if the actual pool ratio changes too much and I’d have to deposit more than that ratio requires, then revert.”
+amountADesired / amountBDesired — how much you want to add (max values)
+amountAMin / amountBMin — how much you’re willing to add at minimum, after accounting for price movement (min values)
+
+If the actual pool price moves (which changes the required ratio between tokenA and tokenB), Uniswap adjusts how much of each token is taken.
+If the ratio drifts too much and you’ve set amountAMin or amountBMin properly, the transaction reverts instead of letting you deposit tokens at an unfavorable rate.
+
+⚠️ Why setting them to 0 is risky
+
+If you pass zeros:
+amountAMin = 0;
+amountBMin = 0;
+you’re telling Uniswap:
+“I don’t care what the current price is — just add liquidity no matter what the pool ratio is.”
+That means:
+You might over-deposit one of the tokens if the pool price has shifted.
+You don’t get compensated for that over-deposit — the pool simply keeps the excess liquidity according to the new ratio.
+A MEV bot could see your transaction pending and manipulate the pool price (via flash loan swaps), making you provide liquidity at a much worse rate.
+
+This results in:
+Value loss (slippage beyond tolerance)
+Unfair liquidity position pricing
+Potential sandwich attacks
+
+✅ The correct, safe approach
+You can calculate minimum values based on a slippage tolerance, just like you do with swaps.
+
+```js
+function _calculateLiquidityMin(
+    uint256 amountADesired,
+    uint256 amountBDesired,
+    uint256 slippageBps // e.g., 100 = 1%
+) internal pure returns (uint256 amountAMin, uint256 amountBMin) {
+    amountAMin = (amountADesired * (10_000 - slippageBps)) / 10_000;
+    amountBMin = (amountBDesired * (10_000 - slippageBps)) / 10_000;
+}
+
+```
+
+```js
+(uint256 tokenAMin, uint256 tokenBMin) = _calculateLiquidityMin(
+    desiredA,
+    desiredB,
+    100 // 1% slippage tolerance
+);
+
+i_uniswapRouter.addLiquidity({
+    tokenA: address(token),
+    tokenB: address(counterPartyToken),
+    amountADesired: desiredA,
+    amountBDesired: desiredB,
+    amountAMin: tokenAMin,
+    amountBMin: tokenBMin,
+    to: address(this),
+    deadline: block.timestamp + 300
+});
+```
