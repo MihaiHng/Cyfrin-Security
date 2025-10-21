@@ -52,6 +52,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
         uint256 oldStakePrice,
         uint256 newStakePrice
     );
+    // @audit Unused event
     event VaultGuardians__UpdatedFee(uint256 oldFee, uint256 newFee);
     event VaultGuardians__SweptTokens(address asset);
 
@@ -105,6 +106,7 @@ contract VaultGuardians is Ownable, VaultGuardiansBase {
     // @audit Centralization Risk
     function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
         s_guardianAndDaoCut = newCut;
+        // @audit Is this the correct event to emit?
         emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut);
     }
 

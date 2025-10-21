@@ -194,6 +194,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
             tokenVault = new VaultShares(
                 IVaultShares.ConstructorData({
                     asset: token,
+                    // @audit-issue Invalid NAME & SYMBOL assign for i_tokenTwo
                     vaultName: TOKEN_ONE_VAULT_NAME,
                     vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
                     guardian: msg.sender,
@@ -304,10 +305,15 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         IERC20 token,
         VaultShares tokenVault
     ) private returns (address) {
+        // @audit No address(0) check
         s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+        // @audit Event emitted to early in the function execution
         emit GuardianAdded(msg.sender, token);
+        // @audit Vault guardian should receive their vgToken reward only after staking is successful
+        // If the VG receives his share before the staking completes or fails, he can later redeem the vault stake of another VG
         i_vgToken.mint(msg.sender, s_guardianStakePrice);
         token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library
         bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
         if (!succ) {
             revert VaultGuardiansBase__TransferFailed();
