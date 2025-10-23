@@ -24,6 +24,11 @@ Can a vault have more than 1 guardian?
 
 Low: Clean repo before submitting data for audit/review
 
+## Is the protocol really upgradable? 
+
+We can change the investment strategy, but
+Can we add new investment strategies?
+
 ## Invariants
 
 ### Invariant 1:
@@ -170,7 +175,8 @@ After divest	100% base token again	LP burned, WETH swapped back to USDC.
 
 The adapter abstracts all Uniswap operations for the vault — so the vault doesn’t need to care about liquidity or swaps directly.
 It always ensures the vault ends up back with its base asset after divesting.
-Using block.timestamp as deadline and amountOutMin = 0 makes it vulnerable to slippage or MEV manipulation — should ideally be replaced with configurable parameters.
+
+X - Using block.timestamp as deadline and amountOutMin = 0 makes it vulnerable to slippage or MEV manipulation — should ideally be replaced with configurable parameters.
 
 
 ## Caught by Aderyn
