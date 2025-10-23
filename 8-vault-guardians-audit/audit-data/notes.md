@@ -24,6 +24,50 @@ Can a vault have more than 1 guardian?
 
 Low: Clean repo before submitting data for audit/review
 
+## Invariants
+
+### Invariant 1:
+The total vault value (on-chain + invested) must always be ≥ total user deposits.
+
+```js
+totalAssets() ≥ sum of user shares (in asset units)
+```
+
+```js
+contract Invariant_VaultGuardian is BaseInvariantTest {
+    function invariant_totalAssetsConservation() public {
+        uint256 vaultTotal = vault.totalAssets();
+        uint256 internalHoldings = vault.asset().balanceOf(address(vault));
+        uint256 invested = aave.totalValue() + uni.totalValue();
+        assertApproxEqAbs(vaultTotal, internalHoldings + invested, 1e6);
+    }
+
+    function invariant_allocationsSumTo100Percent() public {
+        ( , , AllocationData memory alloc ) = vaultGuardian.getGuardianData(...);
+        uint256 sum = alloc.holdAllocation + alloc.uniswapAllocation + alloc.aaveAllocation;
+        assertEq(sum, vaultGuardian.ALLOCATION_PRECISION());
+    }
+
+    // etc.
+}
+```
+
+### Invariant 2:
+
+A guardian can never transfer tokens to arbitrary addresses.
+You can track all external calls — for example:
+
+```js
+target != i_aavePool && target != i_uniswapRouter && target != vault
+```
+
+    => revert or no state change
+
+That ensures funds never leak outside the investable universe.
+
+### Invariant 3:
+
+Vault token (vgToken) total supply always equals total user shares.
 
 
 _uniswapInvest() flow (Investing into Uniswap pool)

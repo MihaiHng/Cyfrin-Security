@@ -23,11 +23,11 @@ abstract contract Fork_Test is Base_Test {
         // labelContracts();
     }
 
-    function testForkWorks() public {
+    function testForkWorks() public view {
         assertEq(block.chainid, 1);
     }
 
-    function testForkGetsCorrectAddresses() public {
+    function testForkGetsCorrectAddresses() public view {
         assertEq(AAVE_POOL, vaultGuardians.getAavePool());
     }
 
