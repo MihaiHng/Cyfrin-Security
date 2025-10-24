@@ -70,7 +70,7 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
     address private immutable i_uniswapV2Router;
     VaultGuardianToken private immutable i_vgToken;
 
-    // @audit-info - Unused state variable
+    // w @audit-info - Unused state variable
     uint256 private constant GUARDIAN_FEE = 0.1 ether;
 
     // DAO updatable values
