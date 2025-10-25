@@ -8,6 +8,59 @@
 
 **Recommended Mitigation:** 
 
+
+
+### [H-#] `nonReentrant` is not the First Modifier in `VaultShares.sol` which makes the functions vulnerable to reentrancy attacks
+
+**Description:** 
+
+Found in:
+`VaultShares::deposit`
+`VaultShares::rebalanceFunds`
+`VaultShares::withdraw`
+`VaultShares::redeem`
+
+The placement of the divestThenInvest modifier before the nonReentrant modifier in the function signature creates a critical window for exploitation.
+
+```js
+function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+```
+
+**Impact:** Loss or manipulation of funds
+
+This could allow an attacker to, for example, withdraw their share twice or call the divestment logic to retrieve tokens that they shouldn't have access to, leading to a direct loss of user funds from the vault.
+
+A reentrant call could interrupt the process, leading to a situation where the contract's internal accounting is calculated based on incomplete or manipulated data.
+
+**Proof of Concept:**
+
+*** Mechanism of Attack ***
+
+The Solidity compiler executes modifiers in the order they are listed.
+
+1. isActive runs (a simple check, no external call, safe).
+
+2. divestThenInvest runs:
+
+- It executes the Divest logic, which includes external calls to third-party protocols (Uniswap and Aave) via _uniswapDivest and _aaveDivest.
+
+- Since divestment from these protocols often involves the target protocol sending tokens back to the vault, these are external calls that transfer control flow.
+
+3. Reentrancy Window Opens: An attacker (who controls one of the addresses or a token hook involved in the divestment) can trigger a malicious fallback or hook function in their contract during the divestment phase.
+
+4. Bypass: The attacker's malicious code executes and immediately calls rebalanceFunds() again. Since the execution hasn't reached the nonReentrant modifier yet, the reentrancy lock has not been set.
+
+5. Exploitation: The recursive call to rebalanceFunds() proceeds and executes the divestThenInvest logic a second time, potentially causing unauthorized state changes, double-claiming of funds, or manipulation of the fund's internal accounting before the first call can complete its state updates.
+
+**Recommended Mitigation:** The fix is a best practice standard that should always be followed to prevent a reentrancy vulnerability from being introduced in the future:
+
+Always place the nonReentrant modifier first in the function declaration.
+
+```js
+function rebalanceFunds() public nonReentrant isActive divestThenInvest {}
+```
+
+
 ### [H-#] Using `block.timestamp` for swap deadline offers no protection
 
 **Description:** The purpose of the deadline parameter in a swap function (like on Uniswap) is to specify a fixed future time after which the transaction will fail.
@@ -177,6 +230,35 @@ The consequence of this incompatibility is that contracts compiled with Solidity
 **Recommended Mitigation:** To mitigate this issue and ensure broader compatibility with various EVM-based L2 solutions, it is recommended to downgrade the Solidity compiler version used in the smart contracts to 0.8.19. This version does not utilize the PUSH0 opcode and therefore maintains compatibility with a wider range of L2 solutions, including ZKsync.
 
 
+### [L-5] No `address(0)` check in `VaultGuardiansBase::_becomeTokenGuardian`
+
+**Description:** The `s_guardians` mapping entry for a guardian is assigned a vault address that can possibly be address(0) if there isn't a check to guard for this possibility.
+
+The functions (becomeGuardian and becomeTokenGuardian) are actually calling _becomeTokenGuardian and generate a non-zero address via new VaultShares(...). So here the contract logic and the `private` visibility help in guarding against assigning an address(0), but there are some edge cases when this could happen, like if the contract is upgraded and new functions or new logic is added.
+
+```js
+s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+```
+**Impact:** The primary impact of the missing address(0) check in _becomeTokenGuardian is a potential for Corrupted State leading to a localized Denial of Service (DoS), which is only possible if the contract is upgraded, or if another internal function is added that fails to validate the input.
+
+**Recommended Mitigation:** Add address(0) check before assigning a new address to the guardian mapping entry.
+
+```diff
+function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
++       if(IVaultShares(address(tokenVault) == address(0) {
++          revert VaultGuardiansBase__InvalidAddress();   
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault)); 
+        })
+        //...
+    }
+```
+
+
+
+
 ### [I-1] Consider cleaning repo 
 
 **Description:** There are unused files: `IVaultGuardians`, `InvestableUniverseAdapter`
@@ -186,3 +268,19 @@ The consequence of this incompatibility is that contracts compiled with Solidity
 **Recommended Mitigation:** Consider deleting unused files and data
 
 
+### [I-2] Insufficient test coverage 
+
+![alt text](image.png)
+
+**Recommended Mitigation:** Aim to get test coverage up to over 90% for all files and improve Branch testing.
+
+
+### [G-1] Functions marked `public` are not used internally
+
+**Description:** A function is declared as `public` when it can be declared as external. The `public` visibility forces the compiler to generate code that copies all function arguments from calldata to memory (specifically, into the free memory pointer region) when the function is called.
+
+This copying operation generates a significant gas consumption for every function call. When the function is only intended to be called by external accounts (EOAs) or other contracts, and not internally by other functions within the same contract. 
+
+**Impact:** Using `public` leads to waste of gas, directly increasing the transaction cost for the user.
+
+**Recommended Mitigation:** Change visibilty from `public` to `external`, if not used internally.
