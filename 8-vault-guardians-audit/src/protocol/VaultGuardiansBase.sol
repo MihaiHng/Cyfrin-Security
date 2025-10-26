@@ -305,11 +305,11 @@ contract VaultGuardiansBase is AStaticTokenData, IVaultData {
         IERC20 token,
         VaultShares tokenVault
     ) private returns (address) {
-        // @audit No address(0) check
+        // @audit-issue No address(0) check
         s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
-        // @audit Event emitted to early in the function execution
+        // @audit-issue Event emitted to early in the function execution
         emit GuardianAdded(msg.sender, token);
-        // @audit Vault guardian should receive their vgToken reward only after staking is successful
+        // @audit-issue Vault guardian should receive their vgToken reward only after staking is successful
         // If the VG receives his share before the staking completes or fails, he can later redeem the vault stake of another VG
         i_vgToken.mint(msg.sender, s_guardianStakePrice);
         token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);

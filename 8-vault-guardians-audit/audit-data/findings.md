@@ -9,8 +9,65 @@
 **Recommended Mitigation:** 
 
 
+### [L-#] Incorrect NAME & SYMBOL in `VaultGuardianBase::becomeTokenGuardian` when creating tokenVault for i_TokenTwo
 
-### [H-#] `nonReentrant` is not the First Modifier in `VaultShares.sol` which makes the functions vulnerable to reentrancy attacks
+**Description:** When an user calls becomeTokenGuardian a new tokenVault is created for the token the guardian has chosen. 
+There are two accepted tokens, i_tokenOne and i_tokenTwo, with different name and symbol. But the function assigns `TOKEN_ONE_VAULT_NAME` & `TOKEN_ONE_VAULT_SYMBOL` for both token vaults, which is misleading to off-chain indexers.
+
+```js
+else if (address(token) == address(i_tokenTwo)) {
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    // Invalid NAME & SYMBOL assign for i_tokenTwo
+                    vaultName: TOKEN_ONE_VAULT_NAME,
+                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+)}
+```
+
+**Impact:** The core problem is that the VaultShares contract, which represents the user's staked position, will use this name and symbol when created.
+
+1. User Confusion and Loss of Trust (Primary Impact)Misleading Information: 
+- A user who stakes LINK (represented by i_tokenTwo) will receive a receipt or see a token in their wallet named "USDC Vault Shares" (using TOKEN_ONE_VAULT_NAME and TOKEN_ONE_VAULT_SYMBOL).
+- Trust and Error: This misalignment can cause panic, as the user might believe their funds were accidentally staked into the wrong asset vault, leading to support issues and a significant loss of trust in the protocol.
+
+2. Broken Off-Chain Systems and Integration 
+- DEX/Aggregator Misidentification: If the protocol integrates with any DEX, portfolio tracker, or DeFi aggregator, those services rely on the token symbol and name to correctly identify the underlying asset. If the LINK vault shares are labeled as USDC vault shares, the tracking systems will display incorrect portfolio values and holdings.
+- Indexing Issues: Off-chain services that index all deployed vaults will see two distinct vault addresses (one for USDC, one for LINK) but with identical metadata, making it impossible to programmatically distinguish between them without reading the vault's internal asset variable.
+
+**Recommended Mitigation:** Use the correct name & symbol for i_tokenTwo.
+
+```diff
+else if (address(token) == address(i_tokenTwo)) {
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    // Use the correct NAME & SYMBOL assign for i_tokenTwo
++                   vaultName: TOKEN_TWO_VAULT_NAME,
++                   vaultSymbol: TOKEN_TWO_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+)}
+```
+
+
+### [H-#] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
 
 **Description:** 
 
@@ -149,6 +206,54 @@ If your vault ever interacts with other contracts dynamically (like different po
 So it’s still best practice to always use SafeERC20 helpers for approvals.
 
 
+### [M-1] Centralization Risk
+
+**Description:** These functions are using an access control library that put the power to make changes in the hands of a single entity, which is a centralization issue.
+
+<details><summary>5 Found Instances</summary>
+
+
+- Found in src/dao/VaultGuardianToken.sol [Line: 9](src/dao/VaultGuardianToken.sol#L9)
+
+    ```solidity
+    contract VaultGuardianToken is ERC20, ERC20Permit, ERC20Votes, Ownable {
+    ```
+
+- Found in src/dao/VaultGuardianToken.sol [Line: 21](src/dao/VaultGuardianToken.sol#L21)
+
+    ```solidity
+        function mint(address to, uint256 amount) external onlyOwner {
+    ```
+
+- Found in src/protocol/VaultGuardians.sol [Line: 40](src/protocol/VaultGuardians.sol#L40)
+
+    ```solidity
+    contract VaultGuardians is Ownable, VaultGuardiansBase {
+    ```
+
+- Found in src/protocol/VaultGuardians.sol [Line: 71](src/protocol/VaultGuardians.sol#L71)
+
+    ```solidity
+        function updateGuardianStakePrice(uint256 newStakePrice) external onlyOwner {
+    ```
+
+- Found in src/protocol/VaultGuardians.sol [Line: 82](src/protocol/VaultGuardians.sol#L82)
+
+    ```solidity
+        function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+    ```
+
+</details>
+
+**Impact:** Contracts have owners with privileged rights to perform admin tasks and need to be trusted to not perform malicious updates or drain funds.
+
+**Recommended Mitigation:** Consider some of the following recommandations to avoid centralization models:
+1. Use a Multi-signature Wallet.
+2. Time-lock Contract.
+3. Governance by DAO.
+4. Use of AccessControl library from OpenZeppelin, which restricts the access to a group of addresses instead a single one.
+
+
 ### [L-1] Unchecked return value 
 
 **Description:** These functions return a value that is then ignored and can lead to several severe security and functionality consequences, especially in DeFi protocols dealing with asset transfers and external calls.
@@ -230,33 +335,191 @@ The consequence of this incompatibility is that contracts compiled with Solidity
 **Recommended Mitigation:** To mitigate this issue and ensure broader compatibility with various EVM-based L2 solutions, it is recommended to downgrade the Solidity compiler version used in the smart contracts to 0.8.19. This version does not utilize the PUSH0 opcode and therefore maintains compatibility with a wider range of L2 solutions, including ZKsync.
 
 
-### [L-5] No `address(0)` check in `VaultGuardiansBase::_becomeTokenGuardian`
+### [L-5] No `address(0)` check in `VaultGuardiansBase::_becomeTokenGuardian` for `tokenVault` and `token`
 
-**Description:** The `s_guardians` mapping entry for a guardian is assigned a vault address that can possibly be address(0) if there isn't a check to guard for this possibility.
+**Description:** These values are passed as parameters, generated by the calling functions (becomeGuardian and becomeTokenGuardian).
 
-The functions (becomeGuardian and becomeTokenGuardian) are actually calling _becomeTokenGuardian and generate a non-zero address via new VaultShares(...). So here the contract logic and the `private` visibility help in guarding against assigning an address(0), but there are some edge cases when this could happen, like if the contract is upgraded and new functions or new logic is added.
+The functions (becomeGuardian and becomeTokenGuardian) are actually calling _becomeTokenGuardian and generate a non-zero address via new VaultShares(...) and user input for token. So here the contract logic and the `private` visibility help in guarding against assigning an address(0), but there are some edge cases when this could happen, like if the contract is upgraded and new functions or new logic is added.
 
 ```js
 s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
 ```
 **Impact:** The primary impact of the missing address(0) check in _becomeTokenGuardian is a potential for Corrupted State leading to a localized Denial of Service (DoS), which is only possible if the contract is upgraded, or if another internal function is added that fails to validate the input.
 
-**Recommended Mitigation:** Add address(0) check before assigning a new address to the guardian mapping entry.
+**Recommended Mitigation:** Add address(0) check before using the values in the `s_guardian` mapping entry.
 
 ```diff
 function _becomeTokenGuardian(
         IERC20 token,
         VaultShares tokenVault
     ) private returns (address) {
++       if((address(token) == address(0) {
++          revert VaultGuardiansBase__InvalidToken();          
 +       if(IVaultShares(address(tokenVault) == address(0) {
 +          revert VaultGuardiansBase__InvalidAddress();   
+
         s_guardians[msg.sender][token] = IVaultShares(address(tokenVault)); 
         })
         //...
     }
 ```
 
+### [L-6] In `VaultGuardiansBase::_becomeTokenGuardian` the guardian receives its `vgToken` before the vault creation is confirmed introducing a risk of reentrancy
 
+**Description:** In order to become a vault guardian a user has to deposit a stake amount `s_guardianStakePrice`. In exchange for this stake amount the vault guardian receives the same amount of `vgToken`, which they use to get their stake amount back when they quit being a vault guardian. 
+
+Here the code doesn't follow the Check-Effect-Interaction(CEI) principle and the vault guardian receives the `vgToken` before the tokenVault creation is confirmed successful.
+
+```js
+function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+
+        emit GuardianAdded(msg.sender, token);
+        
+        i_vgToken.mint(msg.sender, s_guardianStakePrice);
+
+        token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        
+        bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
+        if (!succ) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        uint256 shares = tokenVault.deposit(s_guardianStakePrice, msg.sender);
+        if (shares == 0) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        return address(tokenVault);
+    }
+```
+
+**Impact:** Potential loss of funds
+
+Because the function doesn't follow CEI, it could pose a reentrancy risk, but the function is called internally by `VaultGuardiansBase` and the `vgToken` does not include a reentrancy vector, the Early Reward Minting vulnerability is mitigated for the purpose of a reentrancy attack.
+
+Therefore its impact is reduced from a Critical reentrancy to a Low vulnerability.
+
+However it is still a logic flaw (reward -> deposit -> check) and not good practice in function design.
+
+**Recommended Mitigation:** Consider following the CEI pattern for operations flow.
+The `vgToken` mint should be moved after the `deposit` check was performed.
+
+```diff
+function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
+        // Checks
+
+        // Effects
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+
+        emit GuardianAdded(msg.sender, token);
+
+
+        // Interactions
+-       i_vgToken.mint(msg.sender, s_guardianStakePrice);
+
+        token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        
+        bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
+        if (!succ) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        uint256 shares = tokenVault.deposit(s_guardianStakePrice, msg.sender);
+        if (shares == 0) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        // Correctly executed after checking if deposit was successful
++       i_vgToken.mint(msg.sender, s_guardianStakePrice);
+
+        return address(tokenVault);
+    }
+```
+
+### [L-7] In `VaultGuardiansBase::_becomeTokenGuardian` an event is emitted `GuardianAdded` before the vault creation is confirmed leading to a false pozitive in the off-chain information flow
+
+**Description:** In order to become a vault guardian a user has to deposit a stake amount `s_guardianStakePrice`. The event `GuardianAdded` is emmited before checking if the deposit was actually successful. This can lead to inconsistent information for the event readers.
+
+Here the code doesn't follow the Check-Effect-Interaction(CEI) principle and the event is emitted before the state actually changes.
+
+```js
+function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+
+        emit GuardianAdded(msg.sender, token);
+        
+        i_vgToken.mint(msg.sender, s_guardianStakePrice);
+
+        token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        
+        bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
+        if (!succ) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        uint256 shares = tokenVault.deposit(s_guardianStakePrice, msg.sender);
+        if (shares == 0) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        return address(tokenVault);
+    }
+```
+
+**Impact:** While the state on-chain is correctly reverted, the misinformation can negatively affect systems relying on logs: front-ends, analytics and other smart contracts.
+
+**Proof of Concept:**
+
+1. The event is emitted, signaling to the outside world (off-chain indexers, UI dashboards, explorers) that msg.sender has successfully become a guardian.
+2. The transaction continues to the deposit call, which fails (e.g., due to insufficient allowance, a vault error, or a low-level call failure).
+3. The transaction executes the revert statement, undoing all state changes (including the s_guardians mapping update and the `vgToken` mint).
+4. Result: External listeners will see an event log for GuardianAdded in a transaction that ultimately failed and reverted. 
+
+This creates a confusing and incorrect picture of the contract's state.
+
+**Recommended Mitigation:** Consider following the CEI pattern for operations flow.
+The event emission must be moved to the final section of the function, after all checks and interactions have been successfully completed.
+
+```diff
+function _becomeTokenGuardian(
+        IERC20 token,
+        VaultShares tokenVault
+    ) private returns (address) {
+        // Checks
+
+        // Effects
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+
+-       emit GuardianAdded(msg.sender, token);
+
+
+        // Interactions
+-       i_vgToken.mint(msg.sender, s_guardianStakePrice);
+
+        token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        
+        bool succ = token.approve(address(tokenVault), s_guardianStakePrice);
+        if (!succ) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        uint256 shares = tokenVault.deposit(s_guardianStakePrice, msg.sender);
+        if (shares == 0) {
+            revert VaultGuardiansBase__TransferFailed();
+        }
+        // Correctly executed after checking if deposit was successful
++       i_vgToken.mint(msg.sender, s_guardianStakePrice);
+        // Correctly emitted after checking if deposit was successful
++       emit GuardianAdded(msg.sender, token);
+
+        return address(tokenVault);
+    }
+```
+
+ 
 
 
 ### [I-1] Consider cleaning repo 
