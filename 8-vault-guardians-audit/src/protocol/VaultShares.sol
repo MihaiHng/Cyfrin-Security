@@ -25,6 +25,7 @@ contract VaultShares is
                             STATE VARIABLES
     //////////////////////////////////////////////////////////////*/
     IERC20 public immutable i_uniswapLiquidityToken;
+    IERC20 public i_uniswapPairToken;
     IERC20 internal immutable i_aaveAToken;
     address private immutable i_guardian;
     address private immutable i_vaultGuardians;
@@ -116,13 +117,20 @@ contract VaultShares is
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
+        // @audit No address(0) check on returned token address
         // External calls
         i_aaveAToken = IERC20(
             IPool(constructorData.aavePool)
                 .getReserveData(address(constructorData.asset))
                 .aTokenAddress
         );
+
+        // if (address(constructorData.asset) == address(i_weth)) {
+        //     revert("VaultShares: asset cannot be WETH");
+        // }
+
         // @audit-issue If the asset is weth the Uniswap pair will be weth/weth, which will return adress(0) LP token for this pool; Logic doesn't account for this edge case; If the asset is weth uniswap investment should be skipped? _invest & _divest should change logic to allow this?
+
         i_uniswapLiquidityToken = IERC20(
             i_uniswapFactory.getPair(
                 address(constructorData.asset),
@@ -134,7 +142,7 @@ contract VaultShares is
         //     revert("Uniswap pair not found");
         // }
 
-        // i_uniswapLiquidityToken = IERC20(i_uniswapLiquidityToken);
+        i_uniswapLiquidityToken = IERC20(i_uniswapLiquidityToken);
     }
 
     /**

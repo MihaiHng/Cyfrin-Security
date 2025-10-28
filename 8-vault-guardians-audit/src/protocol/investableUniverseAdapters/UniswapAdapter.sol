@@ -106,9 +106,9 @@ contract UniswapAdapter is AStaticUSDCData {
                 tokenB: address(counterPartyToken),
                 amountADesired: amountOfTokenToSwap + amounts[0],
                 amountBDesired: amounts[1],
-                // @audit Unsafe 0 value => MEV, slippage beyound tolerance
+                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountAMin: 0,
-                // @audit Unsafe 0 value => MEV, slippage beyound tolerance
+                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountBMin: 0,
                 to: address(this),
                 // @audit-issue Using `block.timestamp` for swap deadline offers no protection
@@ -134,9 +134,9 @@ contract UniswapAdapter is AStaticUSDCData {
                 tokenA: address(token),
                 tokenB: address(counterPartyToken),
                 liquidity: liquidityAmount,
-                // @audit Unsafe 0 value => MEV, slippage beyound tolerance
+                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountAMin: 0,
-                // @audit Unsafe 0 value => MEV, slippage beyound tolerance
+                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountBMin: 0,
                 to: address(this),
                 // @audit-issue Using `block.timestamp` for swap deadline offers no protection

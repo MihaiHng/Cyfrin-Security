@@ -9,62 +9,100 @@
 **Recommended Mitigation:** 
 
 
-### [L-#] Incorrect NAME & SYMBOL in `VaultGuardianBase::becomeTokenGuardian` when creating tokenVault for i_TokenTwo
+### [H-#] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
 
-**Description:** When an user calls becomeTokenGuardian a new tokenVault is created for the token the guardian has chosen. 
-There are two accepted tokens, i_tokenOne and i_tokenTwo, with different name and symbol. But the function assigns `TOKEN_ONE_VAULT_NAME` & `TOKEN_ONE_VAULT_SYMBOL` for both token vaults, which is misleading to off-chain indexers.
+**Description:** In `VaultShares` in constructor, is fetched the uniswap LP token. 
 
 ```js
-else if (address(token) == address(i_tokenTwo)) {
-            tokenVault = new VaultShares(
-                IVaultShares.ConstructorData({
-                    asset: token,
-                    // Invalid NAME & SYMBOL assign for i_tokenTwo
-                    vaultName: TOKEN_ONE_VAULT_NAME,
-                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
-                    guardian: msg.sender,
-                    allocationData: allocationData,
-                    aavePool: i_aavePool,
-                    uniswapRouter: i_uniswapV2Router,
-                    guardianAndDaoCut: s_guardianAndDaoCut,
-                    vaultGuardians: address(this),
-                    weth: address(i_weth),
-                    usdc: address(i_tokenOne)
-                })
-)}
+i_uniswapLiquidityToken = IERC20(
+    i_uniswapFactory.getPair(address(token), address(counterPartyToken))
+);
 ```
 
-**Impact:** The core problem is that the VaultShares contract, which represents the user's staked position, will use this name and symbol when created.
+There was no validation that getPair() actually returned a valid deployed pair.
+If the vault’s token and counterPartyToken are identical (e.g., both WETH),
+Uniswap V2’s getPair() returns address(0) since no such pool can exist.
 
-1. User Confusion and Loss of Trust (Primary Impact)Misleading Information: 
-- A user who stakes LINK (represented by i_tokenTwo) will receive a receipt or see a token in their wallet named "USDC Vault Shares" (using TOKEN_ONE_VAULT_NAME and TOKEN_ONE_VAULT_SYMBOL).
-- Trust and Error: This misalignment can cause panic, as the user might believe their funds were accidentally staked into the wrong asset vault, leading to support issues and a significant loss of trust in the protocol.
+This means the vault would set:
 
-2. Broken Off-Chain Systems and Integration 
-- DEX/Aggregator Misidentification: If the protocol integrates with any DEX, portfolio tracker, or DeFi aggregator, those services rely on the token symbol and name to correctly identify the underlying asset. If the LINK vault shares are labeled as USDC vault shares, the tracking systems will display incorrect portfolio values and holdings.
-- Indexing Issues: Off-chain services that index all deployed vaults will see two distinct vault addresses (one for USDC, one for LINK) but with identical metadata, making it impossible to programmatically distinguish between them without reading the vault's internal asset variable.
+```js
+i_uniswapLiquidityToken = IERC20(address(0));
+```
 
-**Recommended Mitigation:** Use the correct name & symbol for i_tokenTwo.
+and continue execution without reverting.
+Later, when the vault attempts to call `i_uniswapLiquidityToken.balanceOf()`, or Transfer LP tokens, or Redeem liquidity,
+the transaction reverts with:
+
+```js
+call to non-contract address 0x0000000000000000000000000000000000000000
+```
+
+Now the vault becomes permanently unusable (funds could be stuck).
+
+**Impact:** 
+
+Vault logic dependent on LP token calls fails completely.
+Vault cannot invest, withdraw, or divest.
+Assets may become stuck or lost if the vault’s state becomes unrecoverable.
+
+The issue breaks core functionality and potentially leads to permanent asset loss or vault lockup.
+
+**Proof of Concept:**
+
+Reproduction:
+
+1. Vault initializes with WETH as asset.
+2. `_uniswapInvest()` calls getPair(WETH, WETH) → returns address(0).
+3. Vault sets i_uniswapLiquidityToken = IERC20(address(0)).
+4. On withdrawal or reinvestment, vault reverts with:
+"call to non-contract address 0x0000000000000000000000000000000000000000"
+5. Vault becomes permanently stuck.
+
+- Proof of Code:
+
+<details>
+<summary>Code</summary>
+
+</details>
+
+**Recommended Mitigation:** 
+
+The current design only allows weth as counter pair token.
+
+Proposed solution:
+
+ 1. Add a dynamic detection for uniswap counter pair:
+    - asset: weth -> counter pair: usdc
+    - asset: not weth -> counter pair: weth
 
 ```diff
-else if (address(token) == address(i_tokenTwo)) {
-            tokenVault = new VaultShares(
-                IVaultShares.ConstructorData({
-                    asset: token,
-                    // Use the correct NAME & SYMBOL assign for i_tokenTwo
-+                   vaultName: TOKEN_TWO_VAULT_NAME,
-+                   vaultSymbol: TOKEN_TWO_VAULT_SYMBOL,
-                    guardian: msg.sender,
-                    allocationData: allocationData,
-                    aavePool: i_aavePool,
-                    uniswapRouter: i_uniswapV2Router,
-                    guardianAndDaoCut: s_guardianAndDaoCut,
-                    vaultGuardians: address(this),
-                    weth: address(i_weth),
-                    usdc: address(i_tokenOne)
-                })
-)}
+     // Dynamic LP counter-asset selection
++    if (constructorData.asset == constructorData.weth) {
+         // asset is WETH, so use USDC as the counter asset for Uniswap LP
++        i_uniswapPairToken = IERC20(constructorData.usdc);
++    } else {
+         // otherwise, standard case — use WETH
++        i_uniswapPairToken = IERC20(constructorData.weth);
++    }
+
+     i_uniswapLiquidityToken = IERC20(
+         i_uniswapFactory.getPair(
+         address(constructorData.asset),
+         // *** use a variable instead of hardcoding i_weth ***
++        address(i_uniswapPairToken)
+         )
+     );
 ```
+
+Other solutions, but less ideal:
+
+ 2. Swap weth to usdc -> adds more complexity and moving parts
+
+ 3. Redistribution of uniswap allocation into aave allocation -> breaks investment diversification
+
+ 4. Prohibit weth vaults -> restrictive to users
+
+
 
 
 ### [H-#] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
@@ -519,7 +557,100 @@ function _becomeTokenGuardian(
     }
 ```
 
- 
+ ### [L-8] Incorrect NAME & SYMBOL in `VaultGuardianBase::becomeTokenGuardian` when creating tokenVault for i_TokenTwo
+
+**Description:** When an user calls becomeTokenGuardian a new tokenVault is created for the token the guardian has chosen. 
+There are two accepted tokens, i_tokenOne and i_tokenTwo, with different name and symbol. But the function assigns `TOKEN_ONE_VAULT_NAME` & `TOKEN_ONE_VAULT_SYMBOL` for both token vaults, which is misleading to off-chain indexers.
+
+```js
+else if (address(token) == address(i_tokenTwo)) {
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    // Invalid NAME & SYMBOL assign for i_tokenTwo
+                    vaultName: TOKEN_ONE_VAULT_NAME,
+                    vaultSymbol: TOKEN_ONE_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+)}
+```
+
+**Impact:** The core problem is that the VaultShares contract, which represents the user's staked position, will use this name and symbol when created.
+
+1. User Confusion and Loss of Trust (Primary Impact)Misleading Information: 
+- A user who stakes LINK (represented by i_tokenTwo) will receive a receipt or see a token in their wallet named "USDC Vault Shares" (using TOKEN_ONE_VAULT_NAME and TOKEN_ONE_VAULT_SYMBOL).
+- Trust and Error: This misalignment can cause panic, as the user might believe their funds were accidentally staked into the wrong asset vault, leading to support issues and a significant loss of trust in the protocol.
+
+2. Broken Off-Chain Systems and Integration 
+- DEX/Aggregator Misidentification: If the protocol integrates with any DEX, portfolio tracker, or DeFi aggregator, those services rely on the token symbol and name to correctly identify the underlying asset. If the LINK vault shares are labeled as USDC vault shares, the tracking systems will display incorrect portfolio values and holdings.
+- Indexing Issues: Off-chain services that index all deployed vaults will see two distinct vault addresses (one for USDC, one for LINK) but with identical metadata, making it impossible to programmatically distinguish between them without reading the vault's internal asset variable.
+
+**Recommended Mitigation:** Use the correct name & symbol for i_tokenTwo.
+
+```diff
+else if (address(token) == address(i_tokenTwo)) {
+            tokenVault = new VaultShares(
+                IVaultShares.ConstructorData({
+                    asset: token,
+                    // Use the correct NAME & SYMBOL assign for i_tokenTwo
++                   vaultName: TOKEN_TWO_VAULT_NAME,
++                   vaultSymbol: TOKEN_TWO_VAULT_SYMBOL,
+                    guardian: msg.sender,
+                    allocationData: allocationData,
+                    aavePool: i_aavePool,
+                    uniswapRouter: i_uniswapV2Router,
+                    guardianAndDaoCut: s_guardianAndDaoCut,
+                    vaultGuardians: address(this),
+                    weth: address(i_weth),
+                    usdc: address(i_tokenOne)
+                })
+)}
+```
+
+### [L-9] Return value not assigned to named return variable in `AaveAdapter::_aaveDivest`
+
+**Description:** `_aaveDivest` calls `withdraw` on the Aave pool to retrieve the invested amount. This withdraw call returns a uint256 value, the received amount. `_aaveDivest` has declared a return variable `amountOfAssetReturned`, but the Aave pool withraw call return value it is never assigned to it. `_aaveDivest` will always return 0 in this case.
+
+```js
+function _aaveDivest(
+        IERC20 token,
+        uint256 amount
+    ) internal returns (uint256 amountOfAssetReturned) {
+        i_aavePool.withdraw({
+            asset: address(token),
+            amount: amount,
+            to: address(this)
+        });
+    }
+```
+
+**Impact:** The consequence of this is that the calling function receives a 0. Since the return value is not used by the caller, the integrity of the protocol's logic is not affected. It's purely a broken function implementation. 
+
+**Recommended Mitigation:** Assign the withdraw return value to the defined named return variable.
+Explicit return is optional due to the named return param, but it is good practice for clarity. 
+
+```diff
+function _aaveDivest(
+        IERC20 token,
+        uint256 amount
+    ) internal returns (uint256 amountOfAssetReturned) {
++       amountOfAssetReturned = i_aavePool.withdraw({
+            asset: address(token),
+            amount: amount,
+            to: address(this)
+        });
++       return amountOfAssetReturned;
+    }
+```
+
+
 
 
 ### [I-1] Consider cleaning repo 
@@ -536,6 +667,46 @@ function _becomeTokenGuardian(
 ![alt text](image.png)
 
 **Recommended Mitigation:** Aim to get test coverage up to over 90% for all files and improve Branch testing.
+
+
+### [I-3] No check on return value in `AaveAdapter::_aaveDivest` 
+
+**Description:** `_aaveDivest` defines a named return value which is never assigned(see L-9) and never checked 
+
+```js
+function _aaveDivest(
+        IERC20 token,
+        uint256 amount
+    ) internal returns (uint256 amountOfAssetReturned) {
+        i_aavePool.withdraw({
+            asset: address(token),
+            amount: amount,
+            to: address(this)
+        });
+        
+    }
+```
+
+**Impact:** There is minimal impact becuase the return value it is not used by other functions and Aave's `withdraw` is expected to revert on failure, mitigating the most severe risk.
+
+**Recommended Mitigation:** Add a check on the return value of `_aaveDivest`
+
+```diff
+function _aaveDivest(
+        IERC20 token,
+        uint256 amount
+    ) internal returns (uint256 amountOfAssetReturned) {
++       amountOfAssetReturned = i_aavePool.withdraw({
+            asset: address(token),
+            amount: amount,
+            to: address(this)
+        });
++       if (amountOfAssetReturned == 0) {
++           revert AaveAdapter__NothingToWithdraw();
++       }
++       return amountOfAssetReturned;
+    }
+```
 
 
 ### [G-1] Functions marked `public` are not used internally

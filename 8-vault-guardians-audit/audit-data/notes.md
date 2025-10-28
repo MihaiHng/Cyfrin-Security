@@ -74,6 +74,11 @@ That ensures funds never leak outside the investable universe.
 
 Vault token (vgToken) total supply always equals total user shares.
 
+### Invariant 4:
+
+Fees accumulated
+
+--------------------------------------------------
 
 _uniswapInvest() flow (Investing into Uniswap pool)
 
@@ -411,8 +416,6 @@ Protects your vault or user funds from unexpected losses or MEV sandwich attacks
 
 ✅ Prevents large losses from sudden price shifts.
 ✅ Still flexible enough to execute under normal volatility.
-
-### Unchecked return value 
 
 
 ### No explicit return in ``AaveAdapter::_aaveDivest, when compiled will return 0(because `amountOfAssetReturned` is not initialized, which is not good, check where _aaveDivest is used

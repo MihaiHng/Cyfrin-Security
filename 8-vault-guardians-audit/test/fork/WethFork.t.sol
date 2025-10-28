@@ -14,13 +14,15 @@ contract WethForkTest is Fork_Test {
     address public user = makeAddr("user");
 
     IWETH internal wETH;
+    IERC20 internal uSDC;
 
     VaultShares public wethVaultShares;
+    VaultShares public usdcVaultShares;
 
     uint256 guardianAndDaoCut;
     uint256 stakePrice;
     uint256 mintAmount = 100 ether;
-    uint256 userEthBalance = 1000 ether;
+    uint256 userBalance = 1000 ether;
     uint256 depositAmount = 100 ether;
 
     // 500 hold, 250 uniswap, 250 aave
@@ -29,9 +31,13 @@ contract WethForkTest is Fork_Test {
 
     function setUp() public virtual override {
         Fork_Test.setUp();
-        vm.deal(user, userEthBalance);
-        vm.deal(guardian, userEthBalance);
+        vm.deal(user, userBalance);
+        vm.deal(guardian, userBalance);
         wETH = IWETH(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
+        uSDC = IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+
+        deal(address(uSDC), guardian, userBalance);
+        deal(address(uSDC), user, userBalance);
     }
 
     modifier hasGuardian() {
@@ -51,30 +57,77 @@ contract WethForkTest is Fork_Test {
         _;
     }
 
-    function testDepositAndWithdraw() public hasGuardian {
+    modifier hasTokenGuardian() {
+        vm.startPrank(guardian);
+        uSDC.approve(address(vaultGuardians), mintAmount);
+        address tokenVault = vaultGuardians.becomeTokenGuardian(
+            allocationData,
+            uSDC
+        );
+        usdcVaultShares = VaultShares(tokenVault);
+        vm.stopPrank();
+        _;
+    }
+
+    // // Does not work when depositing weth => weth/weth pair => uniswap LP address(0)
+    // function testWethDepositAndWithdraw() public hasGuardian {
+    //     assertTrue(
+    //         address(vaultGuardians.getWeth()) != address(0),
+    //         "WETH address is zero"
+    //     );
+
+    //     console.logAddress(address(weth));
+
+    //     vm.startPrank(user);
+    //     wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
+    //     console.log("WETH amount user: ", wETH.balanceOf(user));
+    //     uint256 wethBalanceBefore = wETH.balanceOf(address(user));
+    //     console.log("User balance before: ", wethBalanceBefore);
+    //     wETH.approve(address(wethVaultShares), mintAmount);
+    //     wethVaultShares.deposit(depositAmount, msg.sender);
+
+    //     vm.warp(block.timestamp + 1 days);
+    //     vm.roll(block.number + 1);
+
+    //     wethVaultShares.withdraw(depositAmount, user, msg.sender);
+    //     vm.stopPrank();
+
+    //     uint256 wethBalanceAfter = wETH.balanceOf(address(user));
+
+    //     assertGe(wethBalanceAfter, wethBalanceBefore);
+    // }
+
+    function testUsdcDepositAndWithdraw() public hasGuardian hasTokenGuardian {
         assertTrue(
-            address(vaultGuardians.getWeth()) != address(0),
-            "WETH address is zero"
+            address(vaultGuardians.getTokenOne()) != address(0),
+            "USDC address is zero"
         );
 
-        console.logAddress(address(weth));
+        uint256 usdcBalanceBefore = uSDC.balanceOf(address(user));
+        console.log("User balance before: ", usdcBalanceBefore);
 
         vm.startPrank(user);
-        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
-        console.log("WETH amount user: ", wETH.balanceOf(user));
-        uint256 wethBalanceBefore = wETH.balanceOf(address(user));
-        console.log("User balance before: ", wethBalanceBefore);
-        wETH.approve(address(wethVaultShares), mintAmount);
-        wethVaultShares.deposit(depositAmount, msg.sender);
+        uSDC.approve(address(vaultGuardians), depositAmount);
+        uint256 usdcSharesAfterDeposit = usdcVaultShares.deposit(
+            depositAmount,
+            msg.sender
+        );
+        console.log("User shares after deposit: ", usdcSharesAfterDeposit);
 
         vm.warp(block.timestamp + 1 days);
         vm.roll(block.number + 1);
 
-        wethVaultShares.withdraw(depositAmount, user, msg.sender);
+        uint256 useSharesAfterWithdraw = usdcVaultShares.withdraw(
+            depositAmount,
+            user,
+            msg.sender
+        );
+        console.log("User shares after withdraw: ", useSharesAfterWithdraw);
         vm.stopPrank();
 
-        uint256 wethBalanceAfter = wETH.balanceOf(address(user));
+        uint256 usdcBalanceAfter = uSDC.balanceOf(address(user));
+        console.log("User balance after: ", usdcBalanceAfter);
 
-        assertGe(wethBalanceAfter, wethBalanceBefore);
+        assertGe(usdcBalanceAfter, usdcBalanceBefore);
     }
 }
