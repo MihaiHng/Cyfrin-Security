@@ -15,9 +15,13 @@ contract WethForkTest is Fork_Test {
 
     IWETH internal wETH;
     IERC20 internal uSDC;
+    IERC20 internal lINK;
 
     VaultShares public wethVaultShares;
     VaultShares public usdcVaultShares;
+    VaultShares public linkVaultShares;
+
+    IERC20 public uniswapLiquidityToken;
 
     uint256 guardianAndDaoCut;
     uint256 stakePrice;
@@ -35,29 +39,33 @@ contract WethForkTest is Fork_Test {
         vm.deal(guardian, userBalance);
         wETH = IWETH(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
         uSDC = IERC20(0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
+        lINK = IERC20(0x514910771AF9Ca656af840dff83E8264EcF986CA);
 
         deal(address(uSDC), guardian, userBalance);
         deal(address(uSDC), user, userBalance);
+
+        deal(address(lINK), guardian, userBalance);
+        deal(address(lINK), user, userBalance);
     }
 
     modifier hasGuardian() {
         vm.startPrank(guardian);
         wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
         wETH.approve(address(vaultGuardians), mintAmount);
-        console.log("vaultGuardians WETH: ", address(vaultGuardians.getWeth()));
+        //console.log("vaultGuardians WETH: ", address(vaultGuardians.getWeth()));
         address wethVault = vaultGuardians.becomeGuardian(allocationData);
-        console.log("VaultShares created: ", wethVault);
+        //console.log("VaultShares created: ", wethVault);
         wethVaultShares = VaultShares(wethVault);
-        console.log(
-            "Uniswap LP token: ",
-            address(wethVaultShares.i_uniswapLiquidityToken())
-        );
-        console.log("VaultShares asset(): ", address(wethVaultShares.asset()));
+        // console.log(
+        //     "Uniswap LP token: ",
+        //     address(wethVaultShares.i_uniswapLiquidityToken())
+        // );
+        //console.log("VaultShares asset(): ", address(wethVaultShares.asset()));
         vm.stopPrank();
         _;
     }
 
-    modifier hasTokenGuardian() {
+    modifier hasTokenGuardianUsdc() {
         vm.startPrank(guardian);
         uSDC.approve(address(vaultGuardians), mintAmount);
         address tokenVault = vaultGuardians.becomeTokenGuardian(
@@ -69,13 +77,20 @@ contract WethForkTest is Fork_Test {
         _;
     }
 
+    modifier hasTokenGuardianLink() {
+        vm.startPrank(guardian);
+        lINK.approve(address(vaultGuardians), mintAmount);
+        address tokenVault = vaultGuardians.becomeTokenGuardian(
+            allocationData,
+            lINK
+        );
+        linkVaultShares = VaultShares(tokenVault);
+        vm.stopPrank();
+        _;
+    }
+
     // // Does not work when depositing weth => weth/weth pair => uniswap LP address(0)
     // function testWethDepositAndWithdraw() public hasGuardian {
-    //     assertTrue(
-    //         address(vaultGuardians.getWeth()) != address(0),
-    //         "WETH address is zero"
-    //     );
-
     //     console.logAddress(address(weth));
 
     //     vm.startPrank(user);
@@ -97,32 +112,51 @@ contract WethForkTest is Fork_Test {
     //     assertGe(wethBalanceAfter, wethBalanceBefore);
     // }
 
-    function testUsdcDepositAndWithdraw() public hasGuardian hasTokenGuardian {
-        assertTrue(
-            address(vaultGuardians.getTokenOne()) != address(0),
-            "USDC address is zero"
-        );
-
+    function testUsdcDepositAndWithdraw()
+        public
+        hasGuardian
+        hasTokenGuardianUsdc
+    {
         uint256 usdcBalanceBefore = uSDC.balanceOf(address(user));
         console.log("User balance before: ", usdcBalanceBefore);
 
         vm.startPrank(user);
-        uSDC.approve(address(vaultGuardians), depositAmount);
+        uSDC.approve(address(usdcVaultShares), depositAmount);
         uint256 usdcSharesAfterDeposit = usdcVaultShares.deposit(
             depositAmount,
-            msg.sender
+            user
         );
+
         console.log("User shares after deposit: ", usdcSharesAfterDeposit);
+
+        uniswapLiquidityToken = usdcVaultShares.i_uniswapLiquidityToken();
+
+        console.log(
+            "Vault LP balance:",
+            uniswapLiquidityToken.balanceOf(address(usdcVaultShares))
+        );
 
         vm.warp(block.timestamp + 1 days);
         vm.roll(block.number + 1);
 
-        uint256 useSharesAfterWithdraw = usdcVaultShares.withdraw(
-            depositAmount,
+        // uint256 usdcSharesAfterWithdraw = usdcVaultShares.withdraw(
+        //     depositAmount,
+        //     user,
+        //     user
+        // );
+
+        // FULL EXIT: redeem ALL shares of user
+        uint256 assetsReturned = usdcVaultShares.redeem(
+            usdcVaultShares.balanceOf(user), // all shares
             user,
-            msg.sender
+            user
         );
-        console.log("User shares after withdraw: ", useSharesAfterWithdraw);
+        console.log("Assets returned by redeem:", assetsReturned);
+
+        console.log(
+            "User shares after withdraw: ",
+            usdcVaultShares.balanceOf(user)
+        );
         vm.stopPrank();
 
         uint256 usdcBalanceAfter = uSDC.balanceOf(address(user));
@@ -130,4 +164,66 @@ contract WethForkTest is Fork_Test {
 
         assertGe(usdcBalanceAfter, usdcBalanceBefore);
     }
+
+    function testLinkDepositAndWithdraw()
+        public
+        hasGuardian
+        hasTokenGuardianLink
+    {
+        uint256 linkBalanceBefore = lINK.balanceOf(address(user));
+        console.log("User balance before: ", linkBalanceBefore);
+
+        vm.startPrank(user);
+        lINK.approve(address(linkVaultShares), depositAmount);
+        uint256 linkSharesAfterDeposit = linkVaultShares.deposit(
+            depositAmount,
+            user
+        );
+
+        console.log("User shares after deposit: ", linkSharesAfterDeposit);
+
+        uniswapLiquidityToken = linkVaultShares.i_uniswapLiquidityToken();
+
+        console.log(
+            "Vault LP balance:",
+            uniswapLiquidityToken.balanceOf(address(linkVaultShares))
+        );
+
+        vm.warp(block.timestamp + 1 days);
+        vm.roll(block.number + 1);
+
+        // uint256 usdcSharesAfterWithdraw = usdcVaultShares.withdraw(
+        //     depositAmount,
+        //     user,
+        //     user
+        // );
+
+        // FULL EXIT: redeem ALL shares of user
+        uint256 assetsReturned = linkVaultShares.redeem(
+            linkVaultShares.balanceOf(user), // all shares
+            user,
+            user
+        );
+        console.log("Assets returned by redeem:", assetsReturned);
+
+        console.log(
+            "User shares after withdraw: ",
+            linkVaultShares.balanceOf(user)
+        );
+        vm.stopPrank();
+
+        uint256 linkBalanceAfter = lINK.balanceOf(address(user));
+        console.log("User balance after: ", linkBalanceAfter);
+
+        assertGe(linkBalanceAfter, linkBalanceBefore);
+    }
 }
+// 160320000000064127990
+// 156158416142172352282
+
+//   User balance before:        1000.000.000.000.000.000.000
+//   User shares after deposit:  160320000000064127990
+//   Vault LP balance:           2.040.564.172.891.237.178
+//   Assets returned by redeem:  2.629.031.173.975.901.203
+//   User shares after withdraw: 156158416142172352282
+//   User balance after:         1002.629.031.173.975.901.203

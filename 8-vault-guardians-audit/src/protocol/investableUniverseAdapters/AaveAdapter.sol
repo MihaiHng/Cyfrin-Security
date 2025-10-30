@@ -27,6 +27,7 @@ contract AaveAdapter {
         // asset.safeIncreaseAllowance(address(i_aavePool), amount);
         // If the vault logic always uses 18-decimal normalized math, we must rescale:
         // @audit-issue USDC token -> no amount transformation leads to invalid amounts
+
         uint8 assetDecimals = IERC20Metadata(address(asset)).decimals();
 
         if (assetDecimals < 18) {

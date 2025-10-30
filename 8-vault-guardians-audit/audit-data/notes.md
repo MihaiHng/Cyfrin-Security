@@ -484,3 +484,42 @@ i_uniswapRouter.addLiquidity({
     deadline: block.timestamp + 300
 });
 ```
+
+### Vault doesn't release to the user, when withdrawing, the pricipal+yield accrued, the user only gets their principal, while the yield ir reinvested in the vault because of the divestThenInvest() modifier => there is no way to withdraw everything if the user wants to? => user can use redeem to burn all shares
+
+How Live ERC-4626 Vaults Work in Practice
+
+When a user withdraws, they burn shares.
+Those shares always redeem at the current exchange rate:
+
+exchangeRate = totalAssets / totalSupply(shares)
+
+If the vault has accrued yield (e.g. Aave interest, AMM fees, points etc.),
+then totalAssets increased while totalShares did not.
+So exchangeRate goes up → each share is worth more.
+
+Thus:
+When user withdraws, they get back principal + their proportional yield
+simply because the share price increased.
+This is how Yearn, Aave v3 ERC-4626 wrappers, Beefy, etc. work.
+
+Why Your Test Did Not Return Yield
+
+In your implementation, during withdraw() you do this:
+divestThenInvest runs before sharing the withdrawal
+you unwind positions
+then you immediately reinvest the leftover amount
+You only withdraw exactly assets asked by the user — not their % share of full vault value
+That means you effectively gave the user a fixed principal amount,
+but kept the yield in the vault and re-invested it.
+That’s why the user did not see yield.
+In Live Vaults (like Yearn, Aave 4626 wrappers)
+They do not reinvest after withdraw before computing assets owed.
+They compute assets owed against the full accrued state.
+They give the user:
+what their shares are worth after yield accrued
+and only then is the remainder reinvested (if at all)
+
+Summary
+✅ Yes — real ERC-4626 vaults return principal + yield on withdraw
+❌ Your vault suppressed yield at withdraw by reinvesting early and using fixed assets input instead of share-based redemption.
