@@ -9,15 +9,7 @@ import {VaultGuardianGovernor} from "../../src/dao/VaultGuardianGovernor.sol";
 import {VaultGuardianToken} from "../../src/dao/VaultGuardianToken.sol";
 
 contract ProofOfCodes is VaultSharesTest {
-    modifier hasGuardian() {
-        vm.startPrank(guardian);
-        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
-        wETH.approve(address(vaultGuardians), mintAmount);
-        address wethVault = vaultGuardians.becomeGuardian(allocationData);
-        wethVaultShares = VaultShares(wethVault);
-        vm.stopPrank();
-        _;
-    }
+    IERC20 public uniswapLiquidityToken;
 
     function testWrongBalance() public {
         // Mint 100 ETH
@@ -42,14 +34,21 @@ contract ProofOfCodes is VaultSharesTest {
         console.log(wethVaultShares.totalAssets());
     }
 
+    // Fails because Mock Uniswap Factory getPair() always returns a valid address, unlike real mainnet or forked scenario when address(0) is returned
     function testWethVaultGeneratesUniswapAddress0LP() public hasGuardian {
+        weth.mint(mintAmount, user);
         vm.startPrank(user);
-        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
-        //console.log("WETH amount user: ", wETH.balanceOf(user));
-        uint256 wethBalanceBefore = wETH.balanceOf(address(user));
-        //console.log("User balance before: ", wethBalanceBefore);
-        wETH.approve(address(wethVaultShares), mintAmount);
-        wethVaultShares.deposit(depositAmount, user);
+        weth.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(mintAmount, user);
+
+        uniswapLiquidityToken = wethVaultShares.i_uniswapLiquidityToken();
+
+        console.log(
+            "Uniswap LP token address:",
+            address(uniswapLiquidityToken)
+        );
+
+        assertEq(address(uniswapLiquidityToken), address(0));
     }
 }
 

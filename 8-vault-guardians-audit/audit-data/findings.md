@@ -60,11 +60,30 @@ Reproduction:
 
 - Proof of Code:
 
-Add this test in ProofOfCodes.t.sol
+Add this test in WethFork.t.sol in test/fork
+
+Mock Uniswap Factory getPair() always returns a valid address, unlike real mainnet or forked scenario where address(0) is returned.
 
 <details>
 <summary>Code</summary>
 
+```js
+function testWethVaultGeneratesUniswapAddress0LP() public hasGuardian {
+        vm.startPrank(user);
+        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
+        wETH.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(mintAmount, user);
+
+        uniswapLiquidityToken = wethVaultShares.i_uniswapLiquidityToken();
+
+        console.log(
+            "Uniswap LP token address:",
+            address(uniswapLiquidityToken)
+        );
+
+        assertEq(address(uniswapLiquidityToken), address(0));
+    }
+```
 </details>
 
 **Recommended Mitigation:** 

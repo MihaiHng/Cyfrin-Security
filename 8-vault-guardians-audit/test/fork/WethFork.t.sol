@@ -217,6 +217,22 @@ contract WethForkTest is Fork_Test {
 
         assertGe(linkBalanceAfter, linkBalanceBefore);
     }
+
+    function testWethVaultGeneratesUniswapAddress0LP() public hasGuardian {
+        vm.startPrank(user);
+        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
+        wETH.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(mintAmount, user);
+
+        uniswapLiquidityToken = wethVaultShares.i_uniswapLiquidityToken();
+
+        console.log(
+            "Uniswap LP token address:",
+            address(uniswapLiquidityToken)
+        );
+
+        assertEq(address(uniswapLiquidityToken), address(0));
+    }
 }
 // 160320000000064127990
 // 156158416142172352282
