@@ -9,6 +9,16 @@ import {VaultGuardianGovernor} from "../../src/dao/VaultGuardianGovernor.sol";
 import {VaultGuardianToken} from "../../src/dao/VaultGuardianToken.sol";
 
 contract ProofOfCodes is VaultSharesTest {
+    modifier hasGuardian() {
+        vm.startPrank(guardian);
+        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
+        wETH.approve(address(vaultGuardians), mintAmount);
+        address wethVault = vaultGuardians.becomeGuardian(allocationData);
+        wethVaultShares = VaultShares(wethVault);
+        vm.stopPrank();
+        _;
+    }
+
     function testWrongBalance() public {
         // Mint 100 ETH
         weth.mint(mintAmount, guardian);
@@ -30,6 +40,16 @@ contract ProofOfCodes is VaultSharesTest {
 
         // prints 41.25 ETH
         console.log(wethVaultShares.totalAssets());
+    }
+
+    function testWethVaultGeneratesUniswapAddress0LP() public hasGuardian {
+        vm.startPrank(user);
+        wETH.deposit{value: mintAmount}(); // convert ETH -> WETH
+        //console.log("WETH amount user: ", wETH.balanceOf(user));
+        uint256 wethBalanceBefore = wETH.balanceOf(address(user));
+        //console.log("User balance before: ", wethBalanceBefore);
+        wETH.approve(address(wethVaultShares), mintAmount);
+        wethVaultShares.deposit(depositAmount, user);
     }
 }
 

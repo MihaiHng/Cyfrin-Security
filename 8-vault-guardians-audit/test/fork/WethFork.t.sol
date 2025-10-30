@@ -99,12 +99,12 @@ contract WethForkTest is Fork_Test {
     //     uint256 wethBalanceBefore = wETH.balanceOf(address(user));
     //     console.log("User balance before: ", wethBalanceBefore);
     //     wETH.approve(address(wethVaultShares), mintAmount);
-    //     wethVaultShares.deposit(depositAmount, msg.sender);
+    //     wethVaultShares.deposit(depositAmount, user);
 
     //     vm.warp(block.timestamp + 1 days);
     //     vm.roll(block.number + 1);
 
-    //     wethVaultShares.withdraw(depositAmount, user, msg.sender);
+    //     wethVaultShares.withdraw(depositAmount, user, user);
     //     vm.stopPrank();
 
     //     uint256 wethBalanceAfter = wETH.balanceOf(address(user));
