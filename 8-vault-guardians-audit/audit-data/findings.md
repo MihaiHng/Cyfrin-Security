@@ -313,6 +313,226 @@ So it’s still best practice to always use SafeERC20 helpers for approvals.
 4. Use of AccessControl library from OpenZeppelin, which restricts the access to a group of addresses instead a single one.
 
 
+### [M-2] Missing validation for addresses(0) in `VaultShares` constructor (aToken / Uniswap pair) 
+
+**Description:** In `VaultShares` constructor `aToken` and `Uniswap` pair are assigned by making external calls to aave getReserveData, respectivelly uniswap factory. 
+
+- Aave: aTokenAddress == address(0)
+
+If getReserveData() returns an empty struct because that asset isn’t supported by Aave,
+then aTokenAddress will be address(0).
+
+Consequence:
+Later, when your vault tries to deposit to Aave via _aaveInvest(), it will interact with address(0), causing a revert (or worse, if unchecked, a failed call without revert detection).
+
+Impact:
+Users won’t lose funds, but deposits/rebalances will revert unexpectedly or result in locked vaults.
+
+- Uniswap: getPair() == address(0)
+
+If the Uniswap factory doesn’t have a pair for asset/WETH (e.g., asset == WETH), it will return address(0).
+
+Consequence:
+_uniswapInvest() and _uniswapDivest() may call the router or LP token assuming a valid pair exists.
+If not handled, that can cause:
+reverts during deposits or withdrawals, or
+invalid assumptions about invested balances.
+
+Impact:
+No funds can be drained (since address(0) has no code), but the vault may get stuck, or deposits may fail silently.
+
+```js
+i_aaveAToken = IERC20(
+    IPool(constructorData.aavePool)
+        .getReserveData(address(constructorData.asset))
+        .aTokenAddress
+);
+
+i_uniswapLiquidityToken = IERC20(
+    i_uniswapFactory.getPair(
+        address(constructorData.asset),
+        address(i_weth)
+    )
+);
+```
+
+**Impact:** Vaults can be deployed with unsupported or invalid investment configurations, leading to stuck funds or failed deposits.
+
+**Proof of Concept:** This proves that a vault can be deployed with `i_aaveAToken` or `i_uniswapLiquidityToken` = address(0)
+
+- Proof of Code:
+
+Add this test in test/ProofOfCodes
+
+<details>
+<summary>Code</summary>
+
+```js
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import {VaultShares} from "../../src/protocol/VaultShares.sol";
+import {IVaultShares, IERC4626, IVaultData} from "../../src/interfaces/IVaultShares.sol";
+import {DataTypes} from "../../src/vendor/DataTypes.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Base_Test} from "../Base.t.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+
+// Mocks returning address(0)
+contract MockAavePool is Base_Test {
+    function getReserveData(
+        address
+    ) external pure returns (DataTypes.ReserveData memory) {
+        // Create a blank configuration map
+        DataTypes.ReserveConfigurationMap memory emptyConfig = DataTypes
+            .ReserveConfigurationMap({data: 0});
+
+        return
+            DataTypes.ReserveData({
+                configuration: emptyConfig,
+                liquidityIndex: 0,
+                currentLiquidityRate: 0,
+                variableBorrowIndex: 0,
+                currentVariableBorrowRate: 0,
+                currentStableBorrowRate: 0,
+                lastUpdateTimestamp: 0,
+                id: 0,
+                aTokenAddress: address(0),
+                stableDebtTokenAddress: address(0),
+                variableDebtTokenAddress: address(0),
+                interestRateStrategyAddress: address(0),
+                accruedToTreasury: 0,
+                unbacked: 0,
+                isolationModeTotalDebt: 0
+            });
+    }
+}
+
+contract MockUniswapFactory {
+    function getPair(address, address) external pure returns (address) {
+        return address(0);
+    }
+}
+
+contract MockUniswapRouterZero {
+    address private _factory;
+
+    constructor(address factory_) {
+        _factory = factory_;
+    }
+
+    function factory() external view returns (address) {
+        return _factory;
+    }
+}
+
+contract VaultSharesZeroAddressPoC is Base_Test {
+    function testDeployVaultWithZeroAddresses() public {
+        // Deploy mocks used for this PoC (independent of Base_Test's network config)
+        MockAavePool poolZero = new MockAavePool();
+        MockUniswapFactory factoryZero = new MockUniswapFactory();
+        MockUniswapRouterZero routerZero = new MockUniswapRouterZero(
+            address(factoryZero)
+        );
+
+        // Deploy simple ERC20 mocks for asset/weth/usdc 
+        ERC20Mock mockAsset = new ERC20Mock();
+        ERC20Mock mockWETH = new ERC20Mock();
+        ERC20Mock mockUSDC = new ERC20Mock();
+
+        // Make sure the deployer (this) is the vaultGuardians to satisfy onlyVaultGuardians in constructor
+        IVaultShares.ConstructorData memory cdata = IVaultShares
+            .ConstructorData({
+                asset: mockAsset,
+                vaultName: "ZeroAddressVault",
+                vaultSymbol: "ZAV",
+                aavePool: address(poolZero),
+                uniswapRouter: address(routerZero),
+                weth: address(mockWETH),
+                usdc: address(mockUSDC),
+                guardian: address(this),
+                guardianAndDaoCut: 100, // arbitrary
+                vaultGuardians: address(this), // important: constructor calls updateHoldingAllocation() which is onlyVaultGuardians
+                allocationData: IVaultData.AllocationData({
+                    holdAllocation: 500, 
+                    uniswapAllocation: 250,
+                    aaveAllocation: 250
+                })
+            });
+
+        // Deploy VaultShares (constructor will query aavePoolZero and factoryZero)
+        VaultShares vault = new VaultShares(cdata);
+
+        console.log("Vault deployed at:", address(vault));
+
+        // Vulnerable state: the constructor saved zero addresses returned by external calls
+        address aToken = vault.getAaveAToken();
+        address lpToken = vault.getUniswapLiquidtyToken();
+
+        console.log("aToken stored:", aToken);
+        console.log("uniswap LP token stored:", lpToken);
+
+        assertEq(aToken, address(0), "expected aToken to be address(0)");
+        assertEq(
+            lpToken,
+            address(0),
+            "expected uniswap LP token to be address(0)"
+        );
+    }
+}
+```
+</details>
+
+**Recommended Mitigation:** Validate addresses and revert if configuration is invalid.
+
+```diff
+constructor(
+        ConstructorData memory constructorData
+    )
+        ERC4626(constructorData.asset)
+        ERC20(constructorData.vaultName, constructorData.vaultSymbol)
+        AaveAdapter(constructorData.aavePool)
+        UniswapAdapter(
+            constructorData.uniswapRouter,
+            constructorData.weth,
+            constructorData.usdc
+        )
+    {
+        i_guardian = constructorData.guardian;
+        i_guardianAndDaoCut = constructorData.guardianAndDaoCut;
+        i_vaultGuardians = constructorData.vaultGuardians;
+        s_isActive = true;
+        updateHoldingAllocation(constructorData.allocationData);
+
+        i_aaveAToken = IERC20(
+            IPool(constructorData.aavePool)
+                .getReserveData(address(constructorData.asset))
+                .aTokenAddress
+        );
+
+        // New check for address(0)
++       if (address(i_aaveAToken) == address(0)) {
++           revert("Invalid Aave aToken: unsupported asset");
++       }
+
+        i_uniswapLiquidityToken = IERC20(
+            i_uniswapFactory.getPair(
+                address(constructorData.asset),
+                address(i_weth)
+            )
+        );
+
+        // New check for address(0)
++       if (address(i_uniswapLiquidityToken) == address(0)) {
++           revert("Uniswap pair not found");
++       }
+
+        i_uniswapLiquidityToken = IERC20(i_uniswapLiquidityToken);
+    }
+```
+
+
 ### [L-1] Unchecked return value 
 
 **Description:** These functions return a value that is then ignored and can lead to several severe security and functionality consequences, especially in DeFi protocols dealing with asset transfers and external calls.

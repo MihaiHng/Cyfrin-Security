@@ -117,7 +117,7 @@ contract VaultShares is
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
-        // @audit No address(0) check on returned token address
+        // @audit-issue No address(0) check on returned token address
         // External calls
         i_aaveAToken = IERC20(
             IPool(constructorData.aavePool)
