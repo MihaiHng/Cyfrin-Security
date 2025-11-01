@@ -418,7 +418,9 @@ Protects your vault or user funds from unexpected losses or MEV sandwich attacks
 ✅ Still flexible enough to execute under normal volatility.
 
 
-### No explicit return in ``AaveAdapter::_aaveDivest, when compiled will return 0(because `amountOfAssetReturned` is not initialized, which is not good, check where _aaveDivest is used
+### Return value not assigned to named return variable in `AaveAdapter::_aaveDivest`
+
+-> No explicit return in ``AaveAdapter::_aaveDivest, when compiled will return 0(because `amountOfAssetReturned` is not initialized, which is not good, check where _aaveDivest is used
 
 
 ## Issues - Manual Review
@@ -485,7 +487,7 @@ i_uniswapRouter.addLiquidity({
 });
 ```
 
-### Vault doesn't release to the user, when withdrawing, the pricipal+yield accrued, the user only gets their principal, while the yield ir reinvested in the vault because of the divestThenInvest() modifier => there is no way to withdraw everything if the user wants to? => user can use redeem to burn all shares
+### This is not a vulnerability, it's intended behaviour, redeem() can withdraw entire balance, while withdraw() can do a specific amount of asset <=> Vault doesn't release to the user, when withdrawing, the pricipal+yield accrued, the user only gets their principal, while the yield ir reinvested in the vault because of the divestThenInvest() modifier => there is no way to withdraw everything if the user wants to? => user can use redeem to burn all shares
 
 How Live ERC-4626 Vaults Work in Practice
 

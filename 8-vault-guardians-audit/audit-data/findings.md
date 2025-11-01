@@ -9,6 +9,137 @@
 **Recommended Mitigation:** 
 
 
+### [H-#] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
+
+**Description:** 
+
+The contract performs Uniswap swaps and liquidity operations (swapExactTokensForTokens, addLiquidity, and removeLiquidity) without specifying minimum acceptable output or input values.
+This lack of slippage control allows a transaction to execute at any unfavorable price, exposing the protocol to MEV, frontrunning, and large value loss due to market movement.
+
+- Case 1: 0 value for `amountOutMin` in swaps
+
+Found in:
+
+`UniswapAdapter::_uniswapInvest` -> swapExactTokensForTokens()
+`UniswapAdapter::_uniswapDivest` -> swapExactTokensForTokens()
+
+```js
+uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
+    amountIn: amountOfTokenToSwap,
+    amountOutMin: 0, //  no protection
+    ...
+});
+```
+
+Setting these to 0 means the transaction will execute even if the received output is 99% below expected.
+A small market move, a MEV sandwich, or a manipulated pair could drain value from the vault.
+
+For example, when calling `swapExactTokensForTokens()` with amountOutMin = 0, there is no lower limit on the amount of returned tokens, accepting whatever value the market gives back. 
+
+Uniswap’s price depends on pool reserves, so if the pool moves (price shifts between transaction submission and execution), or a MEV bot front-runs the transaction and manipulates the pool price, a large percentage of tokens can be lost. 
+
+- Case 2: 0 value for `amountAMin` / `amountBMin` in liquidity operations
+
+Found in:
+
+`UniswapAdapter::_uniswapInvest` -> addLiquidity()
+`UniswapAdapter::_uniswapDivest` -> removeLiquidity()
+
+```js
+(, , uint256 liquidity) = i_uniswapRouter.addLiquidity({
+    ...
+    amountAMin: 0, //  no protection
+    amountBMin: 0, //  no protection
+    ...
+});
+
+(, ) = i_uniswapRouter.removeLiquidity({
+    ...
+    amountAMin: 0, //  no protection
+    amountBMin: 0, //  no protection
+    ...
+});
+```
+
+When the contract supplies or removes liquidity from a Uniswap pool with amountAMin and amountBMin set to 0, it effectively disables any price-slippage protection during these operations.
+
+Uniswap uses these parameters to guarantee that liquidity is only added or removed within an acceptable price range.
+
+If both are zero, the function call will succeed regardless of how far the pool’s price has moved since the transaction was initiated.
+
+**Impact:** Loss of vault funds -> An attacker or validator can manipulate price before execution, leading to vault assets being swapped at disadvantageous rates, draining value from user deposits.
+
+**Proof of Concept:**
+
+**Recommended Mitigation:** 
+
+Set a real slippage tolerance -> Allow the user (or the vault logic) to specify a percentage tolerance for price movement.
+
+- Case 1:
+
+Compute `amountOutMin` dynamically before swapping.
+
+Add a new function to dynamically calculate `amountOutMin` based on user entered slippage tolerance `slippageBps`:
+
+```diff
++   function _getAmountOutMin(
++       IUniswapV2Router01 router,
++       address[] memory path,
++       uint256 amountIn,
++       uint256 slippageBps // e.g., 100 = 1%
++   ) internal view returns (uint256) {
++       uint256[] memory amountsOut = router.getAmountsOut(amountIn, path);
++       uint256 expectedOut = amountsOut[amountsOut.length - 1];
++       return (expectedOut * (10_000 - slippageBps)) / 10_000;
++   }
+```
+
+Use this value to assign it to `amountOutMinin` for `swapExactTokensForTokens` in  `_uniswapInvest` and `uniswapDivest`:
+
+```diff
++   function _uniswapInvest(IERC20 token, uint256 amount, uint256 slippageBps) internal {
+        IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
+        uint256 amountOfTokenToSwap = amount / 2;
+        s_pathArray = [address(token), address(counterPartyToken)];
+
+        bool succ = token.approve(address(i_uniswapRouter), amountOfTokenToSwap);
+        if (!succ) {
+            revert UniswapAdapter__TransferFailed();
+        }
+
+        // Compute slippage-protected min output
++       uint256 minOut = _getAmountOutMin(i_uniswapRouter, s_pathArray, half, slippageBps);
+
+        uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
+            amountIn: amountOfTokenToSwap,
++           amountOutMin: minOut,
+            path: s_pathArray,
+            to: address(this),
+            deadline: block.timestamp
+        });
+
+        ...
+    }
+```
+
+- Case 2:
+
+Add a new function to dynamically calculate `amountAMin` / `amountBMin` based on user entered slippage tolerance `slippageBps`, like in the swaps example:
+
+```diff
++    function _calculateLiquidityMin(
++        uint256 amountADesired,
++        uint256 amountBDesired,
++        uint256 slippageBps // e.g., 100 = 1%
++    ) internal pure returns (uint256 amountAMin, uint256 amountBMin) {
++        amountAMin = (amountADesired * (10_000 - slippageBps)) / 10_000;
++        amountBMin = (amountBDesired * (10_000 - slippageBps)) / 10_000;
++    }
+```
+
+
+
+
 ### [H-#] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
 
 **Description:** In `VaultShares` in constructor, is fetched the uniswap LP token. 
@@ -177,9 +308,16 @@ function rebalanceFunds() public nonReentrant isActive divestThenInvest {}
 ```
 
 
-### [H-#] Using `block.timestamp` for swap deadline offers no protection
+### [H-#] Using `block.timestamp` for swap deadline offers no protection => where?
 
-**Description:** The purpose of the deadline parameter in a swap function (like on Uniswap) is to specify a fixed future time after which the transaction will fail.
+**Description:** 
+
+Found in:
+
+`UniswapAdapter::_uniswapInvest` -> swapExactTokensForTokens(), addLiquidity()
+`UniswapAdapter::_uniswapDivest` -> swapExactTokensForTokens(), removeLiquidity()
+
+The purpose of the deadline parameter in a swap function (like on Uniswap) is to specify a fixed future time after which the transaction will fail.
 
 When deadline: block.timestamp is used, the deadline is set to the exact moment the transaction is included in the block.
 
@@ -209,10 +347,19 @@ The deadline check is completely bypassed, meaning the transaction never expires
 
 1. Use a future deadline window
 Instead of:
+
+```js 
 deadline: block.timestamp
+```
+
 use something like:
+
+```js
 deadline: block.timestamp + 300  // 5 minutes
+```
+
 or make it configurable.
+
 That way:
 Your transaction won’t be stuck forever (it expires in 5 minutes).
 A validator can’t hold it indefinitely for manipulation.

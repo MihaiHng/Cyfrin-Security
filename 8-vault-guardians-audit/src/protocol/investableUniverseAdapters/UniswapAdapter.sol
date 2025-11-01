@@ -59,7 +59,7 @@ contract UniswapAdapter is AStaticUSDCData {
         // the element at index 1 is the address of the output token
         s_pathArray = [address(token), address(counterPartyToken)];
 
-        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // w@audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
         // token.safeIncreaseAllowance(address(i_uniswapRouter), amountOfTokenToSwap);
         bool succ = token.approve(
             address(i_uniswapRouter),
@@ -69,11 +69,11 @@ contract UniswapAdapter is AStaticUSDCData {
             revert UniswapAdapter__TransferFailed();
         }
 
-        // @audit-issue Using `block.timestamp` for swap deadline offers no protection => should use a set time in the future, ex. block.timestamp + 300(5 min.)
+        // w@audit-issue Using `block.timestamp` for swap deadline offers no protection => should use a set time in the future, ex. block.timestamp + 300(5 min.)
         // In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: amountOfTokenToSwap,
-            // @audit-issue No slippage protection => should use a slippage tolerance or let the user choose
+            // w@audit-issue No slippage protection => should use a slippage tolerance or let the user choose
             amountOutMin: 0,
             path: s_pathArray,
             to: address(this),
@@ -81,14 +81,14 @@ contract UniswapAdapter is AStaticUSDCData {
             deadline: block.timestamp
         });
 
-        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // w@audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
         // token.safeIncreaseAllowance(address(i_uniswapRouter), amounts[1]);
         succ = counterPartyToken.approve(address(i_uniswapRouter), amounts[1]);
         if (!succ) {
             revert UniswapAdapter__TransferFailed();
         }
 
-        // @audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
+        // w@audit-issue Unsafe approve pattern, even though the contract is "using SafeERC20 for IERC20" -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - Uniswap is a trusted spender)
         // token.safeIncreaseAllowance(address(i_uniswapRouter), amountOfTokenToSwap + amounts[0]);
         succ = token.approve(
             address(i_uniswapRouter),
@@ -108,12 +108,12 @@ contract UniswapAdapter is AStaticUSDCData {
                 tokenB: address(counterPartyToken),
                 amountADesired: amountOfTokenToSwap + amounts[0],
                 amountBDesired: amounts[1],
-                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
+                // w@audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountAMin: 0,
-                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
+                // w@audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountBMin: 0,
                 to: address(this),
-                // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+                // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
                 deadline: block.timestamp
             });
 
@@ -161,17 +161,17 @@ contract UniswapAdapter is AStaticUSDCData {
                 tokenA: address(token),
                 tokenB: address(counterPartyToken),
                 liquidity: liquidityAmount,
-                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
+                // w@audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountAMin: 0,
-                // @audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
+                // w@audit-issue Unsafe 0 value => MEV, slippage beyound tolerance
                 amountBMin: 0,
                 to: address(this),
-                // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+                // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
                 deadline: block.timestamp
             });
         s_pathArray = [address(counterPartyToken), address(token)];
 
-        // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+        // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
         // In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
 
         uint256 curAllowance = counterPartyToken.allowance(
@@ -192,11 +192,11 @@ contract UniswapAdapter is AStaticUSDCData {
         // @audit-issue Missing approve allowance for uniswapRouter for counterPartyToken, causes revert in swapExactTokensForTokens
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: counterPartyTokenAmount,
-            // @audit-issue No slippage protection => should use a slippage tolerance or let the user choose
+            // w@audit-issue No slippage protection => should use a slippage tolerance or let the user choose
             amountOutMin: 0,
             path: s_pathArray,
             to: address(this),
-            // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+            // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
             deadline: block.timestamp
         });
         emit UniswapDivested(tokenAmount, amounts[1]);
