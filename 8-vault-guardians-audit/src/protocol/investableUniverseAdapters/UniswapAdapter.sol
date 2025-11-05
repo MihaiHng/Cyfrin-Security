@@ -77,7 +77,7 @@ contract UniswapAdapter is AStaticUSDCData {
             amountOutMin: 0,
             path: s_pathArray,
             to: address(this),
-            // @audit-issue Using `block.timestamp` for swap deadline offers no protection
+            // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
             deadline: block.timestamp
         });
 
@@ -106,6 +106,7 @@ contract UniswapAdapter is AStaticUSDCData {
         ) = i_uniswapRouter.addLiquidity({
                 tokenA: address(token),
                 tokenB: address(counterPartyToken),
+                // w@audit-issue Double accounting for amountOfTokenToSwap, amountOfTokenToSwap + amounts[0]
                 amountADesired: amountOfTokenToSwap + amounts[0],
                 amountBDesired: amounts[1],
                 // w@audit-issue Unsafe 0 value => MEV, slippage beyound tolerance

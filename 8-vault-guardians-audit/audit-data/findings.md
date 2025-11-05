@@ -9,6 +9,331 @@
 **Recommended Mitigation:** 
 
 
+### [H-#] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
+
+**Description:** 
+
+In `UniswapAdapter::_uniswapInvest`, the function uses amountADesired = amountOfTokenToSwap + amounts[0] when adding liquidity. However, amounts[0] already equals amountOfTokenToSwap, which was spent during the prior swap. This results in double accounting for the same amount of the base token.
+
+```js
+        (
+            uint256 tokenAmount,
+            uint256 counterPartyTokenAmount,
+            uint256 liquidity
+        ) = i_uniswapRouter.addLiquidity({
+                tokenA: address(token),
+                tokenB: address(counterPartyToken),
+                // Double accounting for amountOfTokenToSwap, amountOfTokenToSwap + amounts[0]
+                amountADesired: amountOfTokenToSwap + amounts[0],
+                amountBDesired: amounts[1],
+                amountAMin: 0,
+                amountBMin: 0,
+                to: address(this),
+                deadline: block.timestamp
+            });
+```
+
+**Impact:** 
+
+The vault attempts to transfer 1.5× the intended investment amount.
+
+If balance is insufficient → the call reverts, halting deposits or investments.
+
+If balance exists → the vault overspends user funds into the liquidity pool, causing a permanent loss of assets and inaccurate share accounting.
+
+**Proof of Concept:** 
+
+Case 1. Investing 100 tokens, the vault spends 150 — proving double counting and extra spending/loss of funds.
+
+Case 2. If the vault lacks the extra 50 tokens, the same path reverts due to insufficient balance, resulting in denial of service.
+
+Proof of Code for Case 1:
+
+Add this code in a new file in test/ProofOfCodes:
+
+<details> 
+<summary>Code</summary>
+
+```js
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import {VaultShares} from "../../src/protocol/VaultShares.sol";
+import {IVaultShares, IVaultData} from "../../src/interfaces/IVaultShares.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {DataTypes} from "../../src/vendor/DataTypes.sol";
+
+// ---------------------------
+//        Uniswap mocks
+// ---------------------------
+
+contract UniswapLP is ERC20Mock {
+    // Inherit ERC20Mock: free mint/burn helpers already available
+}
+
+contract UniswapFactory {
+    address public immutable pair;
+
+    constructor(address pair_) {
+        pair = pair_;
+    }
+
+    function getPair(address, address) external view returns (address) {
+        return pair;
+    }
+}
+
+// This router is Uniswap-V2-shaped enough for VaultShares.UniswapAdapter
+contract UniswapRouter {
+    address private _factory;
+    UniswapLP private _lp;
+
+    constructor(address factory_, address lp_) {
+        _factory = factory_;
+        _lp = UniswapLP(lp_);
+    }
+
+    function factory() external view returns (address) {
+        return _factory;
+    }
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 /* amountOutMin */,
+        address[] calldata path,
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256[] memory amounts) {
+        // pull input
+        ERC20Mock(path[0]).transferFrom(msg.sender, address(this), amountIn);
+
+        // use mint to avoid needing pre-funding
+        ERC20Mock(path[1]).mint(amountIn, to);
+
+        amounts = new uint256[](path.length);
+        amounts[0] = amountIn;
+        amounts[1] = amountIn;
+    }
+
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 /* amountAMin */,
+        uint256 /* amountBMin */,
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
+        // pull all desired tokens from caller
+        ERC20Mock(tokenA).transferFrom(
+            msg.sender,
+            address(this),
+            amountADesired
+        );
+        ERC20Mock(tokenB).transferFrom(
+            msg.sender,
+            address(this),
+            amountBDesired
+        );
+
+        // mint only 1 wei of LP to the vault
+        _lp.mint(1, to);
+
+        return (amountADesired, amountBDesired, 1);
+    }
+
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity,
+        uint256 /* amountAMin */,
+        uint256 /* amountBMin */,
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256 amountA, uint256 amountB) {
+        // take the LP from caller
+        _lp.transferFrom(msg.sender, address(this), liquidity);
+        // burn
+        _lp.burn(liquidity, address(this));
+
+        // return *1 wei* of each token to the vault
+        ERC20Mock(tokenA).mint(1, to);
+        ERC20Mock(tokenB).mint(1, to);
+
+        return (1, 1);
+    }
+}
+
+// ---------------------------
+//         Aave mocks
+// ---------------------------
+
+// Deploy a small MockAavePool that returns (aTokenAddress, 0,0,...)
+contract MockAavePool {
+    address public immutable aTokenAddr;
+
+    constructor(address _aTokenAddr) {
+        aTokenAddr = _aTokenAddr;
+    }
+
+    // Must match the interface signature used by VaultShares
+    function getReserveData(
+        address
+    ) external view returns (DataTypes.ReserveData memory r) {
+        // leave everything at the zero default, just set aTokenAddress
+        r.aTokenAddress = aTokenAddr;
+    }
+
+    function supply(
+        address /* asset */,
+        uint256 amount,
+        address onBehalfOf,
+        uint16 /* referralCode */
+    ) external {
+        // For the PoC we don’t simulate any lending, just acknowledge the call.
+        if (amount > 0) {
+            ERC20Mock(aTokenAddr).mint(amount, onBehalfOf);
+        }
+    }
+}
+
+// ---------------------------
+//       Test Contract
+// ---------------------------
+
+contract DoubleSpendingAddLiquidity_PoC_Test is Test {
+    VaultShares private vault;
+    ERC20Mock private asset;
+    ERC20Mock private tokenOne;
+    ERC20Mock private mockWETH; // distinct mock WETH
+    ERC20Mock private awethTokenMock;
+
+    function setUp() public {
+        asset = new ERC20Mock();
+        tokenOne = new ERC20Mock();
+        mockWETH = new ERC20Mock(); // distinct mock WETH
+        awethTokenMock = new ERC20Mock();
+
+        MockAavePool pool = new MockAavePool(address(awethTokenMock));
+
+        // LP + Factory + Router
+        UniswapLP lp = new UniswapLP();
+        UniswapFactory factory = new UniswapFactory(address(lp));
+        UniswapRouter router = new UniswapRouter(address(factory), address(lp));
+
+        // Build constructor data
+        IVaultShares.ConstructorData memory c = IVaultShares.ConstructorData({
+            asset: asset,
+            vaultName: "PoC Vault",
+            vaultSymbol: "POC",
+            guardian: address(this),
+            allocationData: IVaultData.AllocationData({
+                holdAllocation: 0,
+                uniswapAllocation: 1000,
+                aaveAllocation: 0
+            }),
+            aavePool: address(pool),
+            uniswapRouter: address(router),
+            guardianAndDaoCut: 100,
+            vaultGuardians: address(this),
+            weth: address(mockWETH),
+            usdc: address(tokenOne)
+        });
+
+        vault = new VaultShares(c);
+
+        // Label for nicer traces
+        vm.label(address(vault), "VaultShares(POC)");
+        vm.label(address(asset), "ASSET");
+        vm.label(address(tokenOne), "TOKEN_ONE");
+        vm.label(address(factory), "MaliciousFactory");
+        vm.label(address(router), "MaliciousRouter");
+        vm.label(address(lp), "MaliciousLP");
+    }
+
+    function test_DoubleAccountingResultsInSilentFundsLeak() public {
+        // User mints and deposits 100 ASSET
+        address user = address(0xBEEF);
+        uint256 depositAmt = 100 ether;
+        uint256 expectedOverspend = 50 ether; // The bug causes extra 50 ether to be moved
+
+        asset.mint(depositAmt, user);
+
+        // pre-fund the vault so the double-accounting won't cause insufficient balance
+        // this must happen after vault creation (setUp) but before deposit triggers invest()
+        asset.mint(depositAmt / 2, address(vault));
+
+        // Vault balance before deposit
+        uint256 vaultBalanceBefore = asset.balanceOf(address(vault));
+        console.log("Vault Balance Before:", vaultBalanceBefore);
+
+        uint256 userBalanceBefore = asset.balanceOf(user);
+        console.log("User Balance Before:", userBalanceBefore);
+
+        // Approve & deposit
+        vm.startPrank(user);
+        asset.approve(address(vault), depositAmt);
+        vault.deposit(depositAmt, user);
+        vm.stopPrank();
+
+        // Vault balance after deposit
+        uint256 vaultBalanceAfter = asset.balanceOf(address(vault));
+        console.log("Vault Balance After:", vaultBalanceAfter);
+
+        uint256 userBalanceAfter = asset.balanceOf(user);
+        console.log("User Balance After:", userBalanceAfter);
+
+        uint256 vaultDelta = vaultBalanceBefore - vaultBalanceAfter;
+
+        // Assert vault double spending, intended -> 100(user balance) ===> real -> 150(user + vault balance)
+        assertEq(
+            /*vaultBalanceBefore - vaultBalanceAfter*/ vaultDelta,
+            expectedOverspend,
+            "Vault lost exactly deposit/2 due to double accounting"
+        );
+        assertEq(
+            vaultBalanceAfter,
+            0,
+            "Vault transfered the expectedOverspend "
+        );
+        assertEq(
+            userBalanceBefore - userBalanceAfter,
+            depositAmt,
+            "User paid depositAmt"
+        );
+    }
+}
+```
+
+</details> 
+
+**Recommended Mitigation:** 
+
+Use only the remaining base tokens for amountADesired:
+
+```diff
++       uint256 tokenLeft = amount - amounts[0];
+
+        (
+            uint256 tokenAmount,
+            uint256 counterPartyTokenAmount,
+            uint256 liquidity
+        ) = i_uniswapRouter.addLiquidity({
+                tokenA: address(token),
+                tokenB: address(counterPartyToken),
+                // Use only the remaining base tokens after swap for amountADesired
++               amountADesired: uint256 tokenLeft,
+                amountBDesired: amounts[1],
+                amountAMin: 0,
+                amountBMin: 0,
+                to: address(this),
+                deadline: block.timestamp
+            });
+```
+
+
 ### [H-#] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
 
 **Description:** 
@@ -70,6 +395,277 @@ If both are zero, the function call will succeed regardless of how far the pool�
 **Impact:** Loss of vault funds -> An attacker or validator can manipulate price before execution, leading to vault assets being swapped at disadvantageous rates, draining value from user deposits.
 
 **Proof of Concept:**
+
+Exploit scenario: Swap with amountOutMin = 0 & Add liquidity with amountAMin / amountBMin = 0
+
+Goal: Manipulate price so the vault swaps into an unfavorable ratio before addLiquidity, causing the vault to deposit assets at a bad price (lose value / mint fewer LP).
+
+1. A user deposits weth into the vault which triggers _investFunds. Vault will attempt to swap half the deposited token for the counterparty and then call addLiquidity with amountAMin = 0 and amountBMin = 0.
+2. Attacker front-run / manipulate price: Immediately before the vault's swap or addLiquidity will be included in a block, the attacker executes a large swap (or flash-loan + swap) on the same pair to move the pool price drastically (e.g., swap many USDC for WETH)
+3. Vault executes swap with amountOutMin = 0,  because amountOutMin is zero, the router will not revert — the vault accepts the unfavorable output amount.
+4. Vault calls addLiquidity(amountAMin=0, amountBMin=0), with the skewed balances, the vault adds liquidity at the manipulated ratio and receives fewer LP tokens than expected or pairs tokens in a bad ratio — effectively losing value.
+5. Vault deposits at manipulated price and loses value. No revert occurs because amountOutMin and amountAMin/amountBMin are zero.
+
+- Proof of Code:
+
+Add this code in a new file in test/ProofOfCodes:
+
+<details> 
+<summary>Code</summary>
+
+```js
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "forge-std/Test.sol";
+import {VaultShares} from "../../src/protocol/VaultShares.sol";
+import {IVaultShares, IVaultData} from "../../src/interfaces/IVaultShares.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {DataTypes} from "../../src/vendor/DataTypes.sol";
+
+// ---------------------------
+//        Uniswap mocks
+// ---------------------------
+
+contract MaliciousLP is ERC20Mock {
+    // Inherit ERC20Mock: free mint/burn helpers already available
+}
+
+contract MaliciousFactory {
+    address public immutable pair;
+
+    constructor(address pair_) {
+        pair = pair_;
+    }
+
+    function getPair(address, address) external view returns (address) {
+        return pair;
+    }
+}
+
+contract MaliciousRouter {
+    // This router is Uniswap-V2-shaped enough for VaultShares.UniswapAdapter
+    // Behavior:
+    //  - swapExactTokensForTokens: takes all input, returns *1 wei* as output
+    //  - addLiquidity: pulls all desired tokens, mints *1 wei* LP
+    //  - removeLiquidity: burns all LP, returns *1 wei* of each token
+    // All succeed because min amounts are zero.
+
+    address private _factory;
+    MaliciousLP private _lp;
+
+    constructor(address factory_, address lp_) {
+        _factory = factory_;
+        _lp = MaliciousLP(lp_);
+    }
+
+    function factory() external view returns (address) {
+        return _factory;
+    }
+
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 /* amountOutMin */, // zero in vulnerable code
+        address[] calldata path,
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256[] memory amounts) {
+        // pull input
+        ERC20Mock(path[0]).transferFrom(msg.sender, address(this), amountIn);
+
+        // mint or transfer *1 wei* of output to `to`
+        // use mint to avoid needing pre-funding
+        ERC20Mock(path[1]).mint(1, to);
+
+        amounts = new uint256[](path.length);
+        amounts[0] = amountIn; // uniswap-style return
+        amounts[1] = 1;
+    }
+
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin, // zero in vulnerable code
+        uint256 amountBMin, // zero in vulnerable code
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
+        // pull all desired tokens from caller
+        ERC20Mock(tokenA).transferFrom(
+            msg.sender,
+            address(this),
+            amountADesired
+        );
+        ERC20Mock(tokenB).transferFrom(
+            msg.sender,
+            address(this),
+            amountBDesired
+        );
+
+        // min checks are zero -> always satisfied
+        require(amountAMin == 0 && amountBMin == 0, "not the vulnerable path");
+
+        // mint only 1 wei of LP to the vault (terrible deal)
+        _lp.mint(1, to);
+
+        return (amountADesired, amountBDesired, 1);
+    }
+
+    function removeLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity,
+        uint256 amountAMin, // zero in vulnerable code
+        uint256 amountBMin, // zero in vulnerable code
+        address to,
+        uint256 /* deadline */
+    ) external returns (uint256 amountA, uint256 amountB) {
+        // take the LP from caller
+        _lp.transferFrom(msg.sender, address(this), liquidity);
+        // burn
+        _lp.burn(liquidity, address(this));
+
+        // return *1 wei* of each token to the vault
+        ERC20Mock(tokenA).mint(1, to);
+        ERC20Mock(tokenB).mint(1, to);
+
+        require(amountAMin == 0 && amountBMin == 0, "not the vulnerable path");
+
+        return (1, 1);
+    }
+}
+
+// ---------------------------
+//         Aave mocks
+// ---------------------------
+
+// Deploy a small MockAavePool that returns (aTokenAddress, 0,0,...)
+contract MockAavePool {
+    address public immutable aTokenAddr;
+
+    constructor(address _aTokenAddr) {
+        aTokenAddr = _aTokenAddr;
+    }
+
+    // Must match the interface signature used by VaultShares
+    function getReserveData(
+        address
+    ) external view returns (DataTypes.ReserveData memory r) {
+        // leave everything at the zero default, just set aTokenAddress
+        r.aTokenAddress = aTokenAddr;
+    }
+
+    function supply(
+        address /* asset */,
+        uint256 amount,
+        address onBehalfOf,
+        uint16 /* referralCode */
+    ) external {
+        if (amount > 0) {
+            ERC20Mock(aTokenAddr).mint(amount, onBehalfOf);
+        }
+    }
+}
+
+// ---------------------------
+//          PoC test
+// ---------------------------
+
+contract SlippageZeroMin_PoC_Test is Test {
+    VaultShares private vault;
+    ERC20Mock private asset;
+    ERC20Mock private tokenOne;
+    ERC20Mock private mockWETH; // distinct mock WETH
+    ERC20Mock private awethTokenMock;
+
+    function setUp() public {
+        asset = new ERC20Mock();
+        tokenOne = new ERC20Mock();
+        mockWETH = new ERC20Mock(); // distinct mock WETH
+        awethTokenMock = new ERC20Mock();
+
+        MockAavePool pool = new MockAavePool(address(awethTokenMock));
+
+        // LP + Factory + Router (malicious)
+        MaliciousLP lp = new MaliciousLP();
+        MaliciousFactory factory = new MaliciousFactory(address(lp));
+        MaliciousRouter router = new MaliciousRouter(
+            address(factory),
+            address(lp)
+        );
+
+        // Build constructor data with:
+        IVaultShares.ConstructorData memory c = IVaultShares.ConstructorData({
+            asset: asset,
+            vaultName: "PoC Vault",
+            vaultSymbol: "POC",
+            guardian: address(this),
+            allocationData: IVaultData.AllocationData({
+                holdAllocation: 0,
+                uniswapAllocation: 1000, // 100% to Uniswap path (will hit vulnerable code)
+                aaveAllocation: 0
+            }),
+            aavePool: address(pool),
+            uniswapRouter: address(router),
+            guardianAndDaoCut: 100,
+            vaultGuardians: address(this),
+            weth: address(mockWETH),
+            usdc: address(tokenOne)
+        });
+
+        vault = new VaultShares(c);
+
+        // Label for nicer traces
+        vm.label(address(vault), "VaultShares(POC)");
+        vm.label(address(asset), "ASSET");
+        vm.label(address(tokenOne), "TOKEN_ONE");
+        vm.label(address(factory), "MaliciousFactory");
+        vm.label(address(router), "MaliciousRouter");
+        vm.label(address(lp), "MaliciousLP");
+    }
+
+    function test_Slippage_WithZeroMins_LosesValue() public {
+        // User mints and deposits 100 ASSET
+        address user = address(0xBEEF);
+        uint256 depositAmt = 100 ether;
+
+        asset.mint(depositAmt, user);
+
+        // pre-fund the vault so the double-accounting won't cause insufficient balance
+        // this must happen after vault creation (setUp) but before deposit triggers invest()
+        asset.mint(depositAmt / 2, address(vault));
+
+        // Approve & deposit
+        vm.startPrank(user);
+        asset.approve(address(vault), depositAmt);
+        uint256 shares = vault.deposit(depositAmt, user);
+        vm.stopPrank();
+
+        // Full redeem immediately – vulnerable paths:
+        //  - invest: swap with amountOutMin=0, addLiquidity with amountAMin/BMin=0
+        //  - redeem: removeLiquidity with amountAMin/BMin=0, swap with amountOutMin=0
+        vm.startPrank(user);
+        uint256 assetsOut = vault.redeem(vault.balanceOf(user), user, user);
+        vm.stopPrank();
+
+        // Show the damage in logs
+        console.log("Deposit:", depositAmt);
+        console.log("Shares minted:", shares);
+        console.log("Assets out on full redeem:", assetsOut);
+
+        // Assert a large loss -> 10x
+        assertLt(
+            assetsOut,
+            depositAmt / 10,
+            "Expected significant loss due to zero slippage protections"
+        );
+    }
+}
+```
+
+</details>
 
 **Recommended Mitigation:** 
 
@@ -137,7 +733,32 @@ Add a new function to dynamically calculate `amountAMin` / `amountBMin` based on
 +    }
 ```
 
+Use this values to assign them to `amountAMin` / `amountBMin` for `addLiquidity`/`removeLiquidity` in  `_uniswapInvest` and `uniswapDivest`:
 
+```diff
++    (uint256 tokenAMin, uint256 tokenBMin) = _calculateLiquidityMin(
++        desiredA,
++        desiredB,
++        100 // 1% slippage tolerance
++    );
+
+     (
+        uint256 tokenAmount,
+        uint256 counterPartyTokenAmount,
+        uint256 liquidity
+     ) = i_uniswapRouter.addLiquidity({
+        tokenA: address(token),
+        tokenB: address(counterPartyToken),
+        amountADesired: desiredA,
+        amountBDesired: desiredB,
++       amountAMin: tokenAMin,
++       amountBMin: tokenBMin,
+        to: address(this),
+        deadline: block.timestamp
+    });
+```
+
+Same for `removeLiquidity`.
 
 
 ### [H-#] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
