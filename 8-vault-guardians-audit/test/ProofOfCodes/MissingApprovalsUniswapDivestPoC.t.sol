@@ -11,11 +11,11 @@ import {DataTypes} from "../../src/vendor/DataTypes.sol";
 //        Uniswap mocks
 // ---------------------------
 
-contract MaliciousLP is ERC20Mock {
+contract UniswapLP is ERC20Mock {
     // Inherit ERC20Mock: free mint/burn helpers already available
 }
 
-contract MaliciousFactory {
+contract UniswapFactory {
     address public immutable pair;
 
     constructor(address pair_) {
@@ -27,20 +27,14 @@ contract MaliciousFactory {
     }
 }
 
-contract MaliciousRouter {
-    // This router is Uniswap-V2-shaped enough for VaultShares.UniswapAdapter
-    // Behavior:
-    //  - swapExactTokensForTokens: takes all input, returns *1 wei* as output
-    //  - addLiquidity: pulls all desired tokens, mints *1 wei* LP
-    //  - removeLiquidity: burns all LP, returns *1 wei* of each token
-    // All succeed because min amounts are zero.
-
+// This router is Uniswap-V2-shaped enough for VaultShares.UniswapAdapter
+contract UniswapRouter {
     address private _factory;
-    MaliciousLP private _lp;
+    UniswapLP private _lp;
 
     constructor(address factory_, address lp_) {
         _factory = factory_;
-        _lp = MaliciousLP(lp_);
+        _lp = UniswapLP(lp_);
     }
 
     function factory() external view returns (address) {
@@ -49,7 +43,7 @@ contract MaliciousRouter {
 
     function swapExactTokensForTokens(
         uint256 amountIn,
-        uint256 /* amountOutMin */, // zero in vulnerable code
+        uint256 /* amountOutMin */,
         address[] calldata path,
         address to,
         uint256 /* deadline */
@@ -57,13 +51,12 @@ contract MaliciousRouter {
         // pull input
         ERC20Mock(path[0]).transferFrom(msg.sender, address(this), amountIn);
 
-        // mint or transfer *1 wei* of output to `to`
         // use mint to avoid needing pre-funding
-        ERC20Mock(path[1]).mint(1, to);
+        ERC20Mock(path[1]).mint(amountIn, to);
 
         amounts = new uint256[](path.length);
-        amounts[0] = amountIn; // uniswap-style return
-        amounts[1] = 1;
+        amounts[0] = amountIn;
+        amounts[1] = amountIn;
     }
 
     function addLiquidity(
@@ -71,8 +64,8 @@ contract MaliciousRouter {
         address tokenB,
         uint256 amountADesired,
         uint256 amountBDesired,
-        uint256 amountAMin, // zero in vulnerable code
-        uint256 amountBMin, // zero in vulnerable code
+        uint256 /* amountAMin */,
+        uint256 /* amountBMin */,
         address to,
         uint256 /* deadline */
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
@@ -88,21 +81,17 @@ contract MaliciousRouter {
             amountBDesired
         );
 
-        // min checks are zero -> always satisfied
-        require(amountAMin == 0 && amountBMin == 0, "not the vulnerable path");
+        _lp.mint(100 ether, to);
 
-        // mint only 1 wei of LP to the vault (terrible deal)
-        _lp.mint(1, to);
-
-        return (amountADesired, amountBDesired, 1);
+        return (amountADesired, amountBDesired, 100 ether);
     }
 
     function removeLiquidity(
         address tokenA,
         address tokenB,
         uint256 liquidity,
-        uint256 amountAMin, // zero in vulnerable code
-        uint256 amountBMin, // zero in vulnerable code
+        uint256 /* amountAMin */,
+        uint256 /* amountBMin */,
         address to,
         uint256 /* deadline */
     ) external returns (uint256 amountA, uint256 amountB) {
@@ -114,8 +103,6 @@ contract MaliciousRouter {
         // return *1 wei* of each token to the vault
         ERC20Mock(tokenA).mint(1, to);
         ERC20Mock(tokenB).mint(1, to);
-
-        require(amountAMin == 0 && amountBMin == 0, "not the vulnerable path");
 
         return (1, 1);
     }
@@ -147,6 +134,7 @@ contract MockAavePool {
         address onBehalfOf,
         uint16 /* referralCode */
     ) external {
+        // For the PoC we don’t simulate any lending, just acknowledge the call.
         if (amount > 0) {
             ERC20Mock(aTokenAddr).mint(amount, onBehalfOf);
         }
@@ -154,19 +142,20 @@ contract MockAavePool {
 }
 
 // ---------------------------
-//          PoC test
+//       Test Contract
 // ---------------------------
 
-contract SlippageZeroMin_PoC_Test is Test {
+contract MissingApprovalsUniswapDivestPoC_Test is Test {
     VaultShares private vault;
     ERC20Mock private asset;
     ERC20Mock private tokenOne;
     ERC20Mock private mockWETH; // distinct mock WETH
     ERC20Mock private awethTokenMock;
 
-    MaliciousLP lp;
-    MaliciousFactory factory;
-    MaliciousRouter router;
+    UniswapRouter router;
+    UniswapLP lp;
+
+    error ERC20InsufficientAllowance(address, uint256, uint256);
 
     function setUp() public {
         asset = new ERC20Mock();
@@ -176,12 +165,12 @@ contract SlippageZeroMin_PoC_Test is Test {
 
         MockAavePool pool = new MockAavePool(address(awethTokenMock));
 
-        // LP + Factory + Router (malicious)
-        lp = new MaliciousLP();
-        factory = new MaliciousFactory(address(lp));
-        router = new MaliciousRouter(address(factory), address(lp));
+        // LP + Factory + Router
+        lp = new UniswapLP();
+        UniswapFactory factory = new UniswapFactory(address(lp));
+        router = new UniswapRouter(address(factory), address(lp));
 
-        // Build constructor data with:
+        // Build constructor data
         IVaultShares.ConstructorData memory c = IVaultShares.ConstructorData({
             asset: asset,
             vaultName: "PoC Vault",
@@ -189,7 +178,7 @@ contract SlippageZeroMin_PoC_Test is Test {
             guardian: address(this),
             allocationData: IVaultData.AllocationData({
                 holdAllocation: 0,
-                uniswapAllocation: 1000, // 100% to Uniswap path (will hit vulnerable code)
+                uniswapAllocation: 1000,
                 aaveAllocation: 0
             }),
             aavePool: address(pool),
@@ -206,12 +195,12 @@ contract SlippageZeroMin_PoC_Test is Test {
         vm.label(address(vault), "VaultShares(POC)");
         vm.label(address(asset), "ASSET");
         vm.label(address(tokenOne), "TOKEN_ONE");
-        vm.label(address(factory), "MaliciousFactory");
-        vm.label(address(router), "MaliciousRouter");
-        vm.label(address(lp), "MaliciousLP");
+        vm.label(address(factory), "Factory");
+        vm.label(address(router), "Router");
+        vm.label(address(lp), "LP");
     }
 
-    function test_Slippage_WithZeroMins_LosesValue() public {
+    function test_MissingApprovalsUniswapDivestResultsInRevert() public {
         // User mints and deposits 100 ASSET
         address user = address(0xBEEF);
         uint256 depositAmt = 100 ether;
@@ -225,33 +214,42 @@ contract SlippageZeroMin_PoC_Test is Test {
         // Approve & deposit
         vm.startPrank(user);
         asset.approve(address(vault), depositAmt);
-        uint256 shares = vault.deposit(depositAmt, user);
+        vault.deposit(depositAmt, user);
         vm.stopPrank();
 
-        // Adding the uniswap approvals that are misssing in the original code
-        vm.startPrank(address(vault));
-        lp.approve(address(router), type(uint256).max);
-        tokenOne.approve(address(router), type(uint256).max);
-        mockWETH.approve(address(router), type(uint256).max);
-        vm.stopPrank();
-
-        // Full redeem immediately – vulnerable paths:
-        //  - invest: swap with amountOutMin=0, addLiquidity with amountAMin/BMin=0
-        //  - redeem: removeLiquidity with amountAMin/BMin=0, swap with amountOutMin=0
-        vm.startPrank(user);
-        uint256 assetsOut = vault.redeem(vault.balanceOf(user), user, user);
-        vm.stopPrank();
-
-        // Show the damage in logs
-        console.log("Deposit:", depositAmt);
-        console.log("Shares minted:", shares);
-        console.log("Assets out on full redeem:", assetsOut);
-
-        // Assert a large loss -> 10x
-        assertLt(
-            assetsOut,
-            depositAmt / 10,
-            "Expected significant loss due to zero slippage protections"
+        uint256 currentAllowance = lp.allowance(
+            address(vault),
+            address(router)
         );
+        uint256 requiredAllowance = lp.balanceOf(address(vault));
+
+        console.log("Current allowance:", currentAllowance);
+        console.log("Required allowance:", requiredAllowance);
+
+        // If we call redeem(), expectRevert wont's be able to pick up the revert, because it happens during a nested call
+        // expectRevert checks the top level call for revert
+        // removeLiquidity() and swapExactTokensForTokens() are nested calls inside redeem() which is the top call, that's why removeLiquidity() is simulated separatelly here
+
+        // Next removeLiquidity() attempt should revert because of insufficient allowance
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                ERC20InsufficientAllowance.selector,
+                address(router),
+                currentAllowance,
+                requiredAllowance
+            )
+        );
+
+        vm.startPrank(address(vault));
+        router.removeLiquidity(
+            address(asset),
+            address(mockWETH),
+            depositAmt,
+            0,
+            0,
+            user,
+            1
+        );
+        vm.stopPrank();
     }
 }

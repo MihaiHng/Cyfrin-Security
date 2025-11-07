@@ -98,7 +98,7 @@ contract VaultShares is
     /*//////////////////////////////////////////////////////////////
                                FUNCTIONS
     //////////////////////////////////////////////////////////////*/
-    // We use a struct to avoid stack too deep errors. Thanks Solidity
+    // We use a struct to avoid stack too deep errors.
     constructor(
         ConstructorData memory constructorData
     )
@@ -117,7 +117,7 @@ contract VaultShares is
         s_isActive = true;
         updateHoldingAllocation(constructorData.allocationData);
 
-        // @audit-issue No address(0) check on returned token address
+        // w@audit-issue No address(0) check on returned token address
         // External calls
         i_aaveAToken = IERC20(
             IPool(constructorData.aavePool)
@@ -129,7 +129,7 @@ contract VaultShares is
         //     revert("VaultShares: asset cannot be WETH");
         // }
 
-        // @audit-issue If the asset is weth the Uniswap pair will be weth/weth, which will return adress(0) LP token for this pool; Logic doesn't account for this edge case; If the asset is weth uniswap investment should be skipped? _invest & _divest should change logic to allow this?
+        // w@audit-issue If the asset is weth the Uniswap pair will be weth/weth, which will return adress(0) LP token for this pool; Logic doesn't account for this edge case; If the asset is weth uniswap investment should be skipped? _invest & _divest should change logic to allow this?
 
         i_uniswapLiquidityToken = IERC20(
             i_uniswapFactory.getPair(
@@ -149,7 +149,7 @@ contract VaultShares is
      * @notice Sets the vault as not active, which means that the vault guardian has quit
      * @notice Users will not be able to invest in this vault, however, they will be able to withdraw their deposited assets
      */
-    // @audit-info Not used internally, can be marked "external"
+    // w@audit-info Not used internally, can be marked "external"
     function setNotActive() public onlyVaultGuardians isActive {
         s_isActive = false;
         emit NoLongerActive();
@@ -185,7 +185,7 @@ contract VaultShares is
         public
         override(ERC4626, IERC4626)
         isActive
-        // @audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
+        // w@audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
         nonReentrant
         returns (uint256)
     {
@@ -230,8 +230,8 @@ contract VaultShares is
      * @notice Anyone can call this and pay the gas costs to rebalance the portfolio at any time.
      * @dev We understand that this is horrible for gas costs.
      */
-    // @audit-info Not used internally, can be marked "external"
-    // @audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
+    // w@audit-info Not used internally, can be marked "external"
+    // w@audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
     // @audit-issue Anyone can call it, should use onlyGuardian modifier
     function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 
@@ -241,7 +241,7 @@ contract VaultShares is
      * We first divest our assets so we get a good idea of how many assets we hold.
      * Then, we redeem for the user, and automatically reinvest.
      */
-    // @audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
+    // w@audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
     function withdraw(
         uint256 assets,
         address receiver,
@@ -263,7 +263,7 @@ contract VaultShares is
      * We first divest our assets so we get a good idea of how many assets we hold.
      * Then, we redeem for the user, and automatically reinvest.
      */
-    // @audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
+    // w@audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
     function redeem(
         uint256 shares,
         address receiver,

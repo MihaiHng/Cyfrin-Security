@@ -58,7 +58,7 @@ contract MockUniswapRouterZero {
 }
 
 contract VaultSharesZeroAddressPoC is Base_Test {
-    function testDeployVaultWithZeroAddresses() public {
+    function test_DeployVaultWithZeroAddresses() public {
         // Deploy mocks used for this PoC (independent of Base_Test's network config)
         MockAavePool poolZero = new MockAavePool();
         MockUniswapFactory factoryZero = new MockUniswapFactory();

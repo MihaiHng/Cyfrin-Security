@@ -141,22 +141,23 @@ contract UniswapAdapter is AStaticUSDCData {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
 
         // Check balance first — prevents sub-underflow revert later
-        uint256 lpBal = s_uniswapLP.balanceOf(address(this));
-        if (liquidityAmount == 0 || liquidityAmount > lpBal) {
-            revert("Invalid liquidity amount");
-        }
+        // uint256 lpBal = s_uniswapLP.balanceOf(address(this));
+        // if (liquidityAmount == 0 || liquidityAmount > lpBal) {
+        //     revert("Invalid liquidity amount");
+        // }
 
         // Approve uniswapRouter to tranfer LP from VaultShares
-        if (
-            s_uniswapLP.allowance(address(this), address(i_uniswapRouter)) == 0
-        ) {
-            s_uniswapLP.safeIncreaseAllowance(
-                address(i_uniswapRouter),
-                type(uint256).max
-            );
-        }
-        // @audit-issue Before removeLiquidity check if there is enough liquidity -> liquidityAmount < s_uniswapLP.balanceOf(address(this))
-        // @audit-issue Missing approve allowance for uniswapRouter for LP tokens, causes revert in removeLiquidity
+        // if (
+        //     s_uniswapLP.allowance(address(this), address(i_uniswapRouter)) == 0
+        // ) {
+        //     s_uniswapLP.safeIncreaseAllowance(
+        //         address(i_uniswapRouter),
+        //         type(uint256).max
+        //     );
+        // }
+
+        // w@audit-issue Low: Before removeLiquidity, check if there is enough liquidity -> liquidityAmount < s_uniswapLP.balanceOf(address(this)) => Not a big threat because divestAndInvest() passes the vault LP balance to the _uniswapDivest
+        // w@audit-issue Missing approve allowance for uniswapRouter for LP tokens, causes revert in removeLiquidity
         (uint256 tokenAmount, uint256 counterPartyTokenAmount) = i_uniswapRouter
             .removeLiquidity({
                 tokenA: address(token),
@@ -175,22 +176,20 @@ contract UniswapAdapter is AStaticUSDCData {
         // w@audit-issue Using `block.timestamp` for swap deadline offers no protection
         // In the PoS model, proposers know well in advance if they will propose one or consecutive blocks ahead of time. In such a scenario, a malicious validator can hold back the transaction and execute it at a more favourable block number.Consider allowing function caller to specify swap deadline input parameter.
 
-        uint256 curAllowance = counterPartyToken.allowance(
-            address(this),
-            address(i_uniswapRouter)
-        );
-        if (curAllowance < counterPartyTokenAmount) {
-            // some tokens require setting allowance to 0 before setting a new value
-            if (curAllowance > 0) {
-                counterPartyToken.approve(address(i_uniswapRouter), 0);
-            }
-            counterPartyToken.approve(
-                address(i_uniswapRouter),
-                type(uint256).max
-            );
-        }
+        // Approve uniswapRouter to tranfer counterPartyToken from VaultShares
+        // if (
+        //     counterPartyToken.allowance(
+        //         address(this),
+        //         address(i_uniswapRouter)
+        //     ) == 0
+        // ) {
+        //     counterPartyToken.safeIncreaseAllowance(
+        //         address(i_uniswapRouter),
+        //         type(uint256).max
+        //     );
+        // }
 
-        // @audit-issue Missing approve allowance for uniswapRouter for counterPartyToken, causes revert in swapExactTokensForTokens
+        // w@audit-issue Missing approve allowance for uniswapRouter for counterPartyToken, causes revert in swapExactTokensForTokens
         uint256[] memory amounts = i_uniswapRouter.swapExactTokensForTokens({
             amountIn: counterPartyTokenAmount,
             // w@audit-issue No slippage protection => should use a slippage tolerance or let the user choose

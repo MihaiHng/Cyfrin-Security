@@ -23,18 +23,19 @@ contract AaveAdapter {
      * @param amount The amount of vault's underlying asset token to invest
      */
     function _aaveInvest(IERC20 asset, uint256 amount) internal {
-        // @audit-issue Unsafe approve pattern -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - AAVE is a trusted spender)
+        // w@audit-issue Unsafe approve pattern -> Use SafeERC20.safeIncreaseAllowance OZ library(Low - AAVE is a trusted spender)
         // asset.safeIncreaseAllowance(address(i_aavePool), amount);
+
         // If the vault logic always uses 18-decimal normalized math, we must rescale:
-        // @audit-issue USDC token -> no amount transformation leads to invalid amounts
+        // w@audit-issue USDC token -> no amount transformation leads to invalid amounts
 
-        uint8 assetDecimals = IERC20Metadata(address(asset)).decimals();
+        // uint8 assetDecimals = IERC20Metadata(address(asset)).decimals();
 
-        if (assetDecimals < 18) {
-            amount = amount / (10 ** (18 - assetDecimals));
-        } else if (assetDecimals > 18) {
-            amount = amount * (10 ** (assetDecimals - 18));
-        }
+        // if (assetDecimals < 18) {
+        //     amount = amount / (10 ** (18 - assetDecimals));
+        // } else if (assetDecimals > 18) {
+        //     amount = amount * (10 ** (assetDecimals - 18));
+        // }
 
         bool succ = asset.approve(address(i_aavePool), amount);
         if (!succ) {
@@ -53,8 +54,8 @@ contract AaveAdapter {
      * @param token The vault's underlying asset token to withdraw
      * @param amount The amount of vault's underlying asset token to withdraw
      */
-    // @audit-issue - Low: No explicit return, when compiled will return 0(because `amountOfAssetReturned` is not initialized) which is not good, check where _aaveDivest is used
-    // @audit-issue Unchecked return value
+    // w@audit-issue - Low: No explicit return, when compiled will return 0(because `amountOfAssetReturned` is not initialized) which is not good, check where _aaveDivest is used
+    // w@audit-issue - Low: Unchecked return value
     function _aaveDivest(
         IERC20 token,
         uint256 amount

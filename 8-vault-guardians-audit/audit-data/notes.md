@@ -22,7 +22,7 @@ Reference: https://github.com/crytic/slither/wiki/Detector-Documentation#unused-
 
 Can a vault have more than 1 guardian?
 
-Low: Clean repo before submitting data for audit/review
+Info: Clean repo before submitting data for audit/review
 
 ## Is the protocol really upgradable? 
 
