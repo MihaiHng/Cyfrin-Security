@@ -199,8 +199,8 @@ contract VaultShares is
         uint256 shares = previewDeposit(assets);
         _deposit(_msgSender(), receiver, assets, shares);
 
-        // @audit-issue Is shares calculation correct? (shares * i_guardianAndDaoCut) / 10_000
-        // @audit-issue No event for minting shares to guardian and DAO
+        // w@audit-issue Is shares calculation correct? (shares * i_guardianAndDaoCut) / 10_000
+        // w@audit-issue No event for minting shares to guardian and DAO
         _mint(i_guardian, shares / i_guardianAndDaoCut);
         _mint(i_vaultGuardians, shares / i_guardianAndDaoCut);
 
@@ -232,7 +232,7 @@ contract VaultShares is
      */
     // w@audit-info Not used internally, can be marked "external"
     // w@audit-issue Reentrancy risk, `nonReentrant` should be the first modifier
-    // @audit-issue Anyone can call it, should use onlyGuardian modifier
+    // W@audit-issue Anyone can call it, should use onlyGuardian modifier
     function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 
     /**
@@ -323,7 +323,7 @@ contract VaultShares is
     /**
      * @return Uniswap's LP token
      */
-    // @audit Typo in function title, Liquidity
+    // w@audit-info Typo in function title, Liquidity
     function getUniswapLiquidtyToken() external view returns (address) {
         return address(i_uniswapLiquidityToken);
     }

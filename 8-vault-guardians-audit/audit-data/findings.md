@@ -9,7 +9,7 @@
 **Recommended Mitigation:** 
 
 
-### [H-#] Missing decimal normalization causes reverts when supplying non-18-decimal tokens (e.g., USDC) to Aave
+### [H-2] Missing decimal normalization causes reverts when supplying non-18-decimal tokens (e.g., USDC) to Aave
 
 **Description:** 
 
@@ -201,7 +201,7 @@ Add proper decimal scaling before interacting with Aave:
 ```
 
 
-### [H-#] Missing LP and Counterparty Token Approvals in _uniswapDivest → Redeem DoS + Locked funds
+### [H-3] Missing LP and Counterparty Token Approvals in _uniswapDivest → Redeem DoS + Locked funds
 
 **Description:** 
 
@@ -535,7 +535,7 @@ Add safe increase allowance for LP and Counterparty Token
 ```
 
 
-### [H-#] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
+### [H-4] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
 
 **Description:** 
 
@@ -867,7 +867,7 @@ Use only the remaining base tokens for amountADesired:
 ```
 
 
-### [H-#] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
+### [H-5] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
 
 **Description:** 
 
@@ -1294,7 +1294,7 @@ Use this values to assign them to `amountAMin` / `amountBMin` for `addLiquidity`
 Same for `removeLiquidity`.
 
 
-### [H-#] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
+### [H-6] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
 
 **Description:** In `VaultShares` in constructor, is fetched the uniswap LP token. 
 
@@ -1411,7 +1411,7 @@ Other solutions, but less ideal:
 
 
 
-### [H-#] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
+### [H-7] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
 
 **Description:** 
 
@@ -1429,13 +1429,13 @@ function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
 
 **Impact:** Loss or manipulation of funds
 
-This could allow an attacker to, for example, withdraw their share twice or call the divestment logic to retrieve tokens that they shouldn't have access to, leading to a direct loss of user funds from the vault.
+This could allow an attacker to withdraw their share twice or call the divestment logic to retrieve tokens that they shouldn't have access to, leading to a direct loss of user funds from the vault.
 
 A reentrant call could interrupt the process, leading to a situation where the contract's internal accounting is calculated based on incomplete or manipulated data.
 
 **Proof of Concept:**
 
-*** Mechanism of Attack ***
+- Mechanism of Attack
 
 The Solidity compiler executes modifiers in the order they are listed.
 
@@ -1453,7 +1453,7 @@ The Solidity compiler executes modifiers in the order they are listed.
 
 5. Exploitation: The recursive call to rebalanceFunds() proceeds and executes the divestThenInvest logic a second time, potentially causing unauthorized state changes, double-claiming of funds, or manipulation of the fund's internal accounting before the first call can complete its state updates.
 
-**Recommended Mitigation:** The fix is a best practice standard that should always be followed to prevent a reentrancy vulnerability from being introduced in the future:
+**Recommended Mitigation:** 
 
 Always place the nonReentrant modifier first in the function declaration.
 
@@ -1462,7 +1462,7 @@ function rebalanceFunds() public nonReentrant isActive divestThenInvest {}
 ```
 
 
-### [H-#] Using `block.timestamp` for swap deadline offers no protection => where?
+### [H-8] Using `block.timestamp` for swap deadline offers no protection
 
 **Description:** 
 
@@ -1834,15 +1834,45 @@ constructor(
 ```
 
 
-### [L-1] TITLE (Root Cause -> Impact)
+### [M-3] Anyone Can Force Rebalances: Unrestricted entrypoint + reentrancy exposure → Value leakage and fund instability
 
 **Description:** 
 
+```js
+function rebalanceFunds() public isActive divestThenInvest nonReentrant {}
+```
+
+The rebalanceFunds() function is declared as public and can be called by any address, because access is not restricted, for example, onl to guardians. This function fully divests and re-invests all vault assets through external protocol interactions (Uniswap and Aave).
+
+Because it lacks access control, anyone can repeatedly trigger full rebalance cycles. Each rebalance incurs swap fees, gas costs, and potential slippage, negatively affecting vault performance.
+
+Also, this function is already affected by the separate high-severity issue “nonReentrant is not the first modifier”, which allows reentrancy during the divestThenInvest phase — amplifying the impact of this unrestricted entrypoint.
+
 **Impact:** 
 
-**Proof of Concept:**
+Attackers or bots can repeatedly call rebalanceFunds() and cause cumulative losses.
 
 **Recommended Mitigation:** 
+
+Restrict access using onlyGuardian or a designated keeper role.
+Move nonReentrant to be the first modifier, in order to guard against reentrancy.
+
+```js
+function rebalanceFunds() public nonReentrant onlyGuardian isActive divestThenInvest  {}
+```
+
+
+### [L-1] Unused event in `VaultGuardians`
+
+**Description:** 
+
+```js
+event VaultGuardians__UpdatedFee(uint256 oldFee, uint256 newFee);
+```
+
+**Impact:** Can increase contract size and complexity. 
+
+**Recommended Mitigation:** Consider using or removing the unused event.
 
 
 
@@ -2230,6 +2260,98 @@ function _uniswapDivest(IERC20 token, uint256 liquidityAmount) internal returns 
     }
 ```
 
+### [L-11] Misleading/Incorrect event emision in `VaultGuardians::updateGuardianAndDaoCut` 
+
+**Description:** The event emmited doesn't correctly describe the function action. 
+The function updates the Guardian and Dao fee, but the event is stating "UpdatedStakePrice".
+
+```js
+/*
+     * @notice Updates the percentage shares guardians & Daos get in new vaults
+     * @param newCut the new cut
+     * @dev this value will be divided by the number of shares whenever a user deposits into a vault
+     * @dev historical vaults will not have their cuts updated, only vaults moving forward
+     */
+    function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+        s_guardianAndDaoCut = newCut;
+        // Incorrect event title
+        emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut);
+    }
+```
+
+**Impact:** Causes misleading logs and confusion for off-chain monitoring.
+
+**Recommended Mitigation:** 
+
+Consider using a correctly describing event title, like the already exisiting and unused event "UpdatedFee".
+
+```diff
+function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
+        s_guardianAndDaoCut = newCut;
+-       emit VaultGuardians__UpdatedStakePrice(s_guardianAndDaoCut, newCut);
++       event VaultGuardians__UpdatedFee(s_guardianAndDaoCut, newCut);
+    }
+```
+
+### [L-12] Ambiguous Guardian and DAO Cut Calculation: Unclear divisor logic → Misleading configuration in `VaultShares::deposit`
+
+**Description:** 
+
+The guardian and DAO fee is calculated using shares / i_guardianAndDaoCut, where i_guardianAndDaoCut is set to 1000. This treats the value as a divisor rather than a percentage or basis-point ratio. The naming (“cut”) suggests a proportional fee, which can confuse or lead to incorrect future updates. Additionally, the same fraction is minted twice — once for the guardian and once for the DAO — doubling the total effective fee.
+
+```js
+_mint(i_guardian, shares / i_guardianAndDaoCut);
+_mint(i_vaultGuardians, shares / i_guardianAndDaoCut);
+```
+
+**Impact:** The total protocol cut is ambiguous and may be misconfigured or misinterpreted, leading to unintended fee rates and inconsistent accounting across vaults.
+
+**Proof of Concept:**
+
+With i_guardianAndDaoCut = 1000 => each receives 0.1% of user shares, totaling 0.2%.
+
+**Recommended Mitigation:** 
+
+Clarify the intended meaning of i_guardianAndDaoCut.
+If it is meant to represent a fee in basis points, use:
+
+```diff
++   uint256 cutSharesTotal = (shares * i_guardianAndDaoCut) / 10_000;
++   uint256 cutShare = cutSharesTotal / 2;
+    _mint(i_guardian, cutShares);
+    _mint(i_vaultGuardians, cutShares);
+```
+
+Otherwise, rename it to guardianAndDaoDivisor and document that it is used as a divisor for clarity.
+
+
+### [L-13] Missing Event Emission on User Deposit in `VaultShares::deposit`
+
+**Description:** 
+
+The `deposit` function in `VaultShares` doesn't emit an event when the operation is completed, indicating that the deposit happened.. 
+This function changes the state by minting vault shares to the user and shares cut to the DAO and guardian.
+Events should be emitted when state is changed.
+
+While OpenZeppelin’s ERC4626 emits a Deposit event for the main user deposit, the additional minting to the guardian and DAO happens silently.
+
+**Impact:** 
+
+Off-chain systems and indexers cannot accurately track vault inflows or fee distributions, reducing transparency and potentially breaking accounting or analytics that rely on emitted events.
+
+**Recommended Mitigation:** 
+
+Emit a dedicated event when shares are minted to the guardian and DAO, on deposit operations:
+
+```diff
++   event GuardianAndDaoSharesMinted(address indexed guardian, address indexed dao, uint256 guardianShares, uint256 daoShares);
+
++   emit GuardianAndDaoSharesMinted(i_guardian, i_vaultGuardians, shares / i_guardianAndDaoCut, shares / i_guardianAndDaoCut);
+
+```
+
+This improves transparency and facilitates accurate monitoring of fee allocations.
+
 
 ### [I-1] Unused interfaces `IInvestableUniverseAdapter` and `IVaultGuardians` with commented-out functions
 
@@ -2290,6 +2412,23 @@ function _aaveDivest(
 ```
 
 Alternatively, remove the unused return value from the function signature to avoid confusion.
+
+
+### [I-4] Typo in function title in `VaultShares::getUniswapLiquidtyToken`
+
+**Description:** 
+
+The function title contains a misspelled word(missing an "i"): Liquidty, instead of Liquidity
+
+**Impact:** No runtime impact, can create confusion
+
+**Recommended Mitigation:** Consider correcting the function title to `getUniswapLiquidityToken`
+
+```diff
++   function getUniswapLiquidityToken() external view returns (address) {
+        return address(i_uniswapLiquidityToken);
+    }
+```
 
 
 ### [G-1] Functions marked `public` are not used internally
