@@ -9,7 +9,7 @@
 **Recommended Mitigation:** 
 
 
-### [H-2] Missing decimal normalization causes reverts when supplying non-18-decimal tokens (e.g., USDC) to Aave
+### [H-2] Missing decimal normalization causes reverts when supplying non-18-decimal tokens (USDC) to Aave
 
 **Description:** 
 
@@ -534,8 +534,91 @@ Add safe increase allowance for LP and Counterparty Token
     }
 ```
 
+### [H-4] Guardians have no restrictions on minting `vgToken`s and can accumulate high amoounts to take over DAO, steal DAO fees and set parameters for own interest
 
-### [H-4] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
+**Description:** Becoming a guardian is repaied by receiving Vault Guardian Tokens (vgTokens). Whenever a guardian successfully calls `VaultGuardiansBase::becomeGuardian` or `VaultGuardiansBase::becomeTokenGuardian`, `_becomeTokenGuardian` is executed, which mints the caller `i_vgToken`. 
+
+```javascript
+    function _becomeTokenGuardian(IERC20 token, VaultShares tokenVault) private returns (address) {
+        s_guardians[msg.sender][token] = IVaultShares(address(tokenVault));
+@>      i_vgToken.mint(msg.sender, s_guardianStakePrice);
+        emit GuardianAdded(msg.sender, token);
+        token.safeTransferFrom(msg.sender, address(this), s_guardianStakePrice);
+        token.approve(address(tokenVault), s_guardianStakePrice);
+        tokenVault.deposit(s_guardianStakePrice, msg.sender);
+        return address(tokenVault);
+    }
+```
+
+Guardians are also free to quit their role at any time, calling the `VaultGuardianBase::quitGuardian` function. The combination of minting vgTokens, and freely being able to quit, results in users being able to farm vgTokens at any time.
+
+**Impact:** Assuming the token has no monetary value, the malicious guardian could accumulate tokens until they can overtake the DAO. Then, they could execute any of these functions of the `VaultGuardians` contract:
+
+```
+  "sweepErc20s(address)": "942d0ff9",
+  "transferOwnership(address)": "f2fde38b",
+  "updateGuardianAndDaoCut(uint256)": "9e8f72a4",
+  "updateGuardianStakePrice(uint256)": "d16fe105",
+```
+
+**Proof of Concept:**
+
+1. User becomes WETH guardian and is minted vgTokens.
+2. User quits, is given back original WETH allocation.
+3. User becomes WETH guardian with the same initial allocation.
+4. Repeat to keep minting vgTokens indefinitely.
+
+<details>
+<summary>Code</summary>
+
+Place the following code into `VaultGuardiansBaseTest.t.sol`
+
+```javascript
+    function testDaoTakeover() public hasGuardian hasTokenGuardian {
+        address maliciousGuardian = makeAddr("maliciousGuardian");
+        uint256 startingVoterUsdcBalance = usdc.balanceOf(maliciousGuardian);
+        uint256 startingVoterWethBalance = weth.balanceOf(maliciousGuardian);
+        assertEq(startingVoterUsdcBalance, 0);
+        assertEq(startingVoterWethBalance, 0);
+
+        VaultGuardianGovernor governor = VaultGuardianGovernor(payable(vaultGuardians.owner()));
+        VaultGuardianToken vgToken = VaultGuardianToken(address(governor.token()));
+
+        // Flash loan the tokens, or just buy a bunch for 1 block
+        weth.mint(mintAmount, maliciousGuardian); // The same amount as the other guardians
+        uint256 startingMaliciousVGTokenBalance = vgToken.balanceOf(maliciousGuardian);
+        uint256 startingRegularVGTokenBalance = vgToken.balanceOf(guardian);
+        console.log("Malicious vgToken Balance:\t", startingMaliciousVGTokenBalance);
+        console.log("Regular vgToken Balance:\t", startingRegularVGTokenBalance);
+
+        // Malicious Guardian farms tokens
+        vm.startPrank(maliciousGuardian);
+        weth.approve(address(vaultGuardians), type(uint256).max);
+        for (uint256 i; i < 10; i++) {
+            address maliciousWethSharesVault = vaultGuardians.becomeGuardian(allocationData);
+            IERC20(maliciousWethSharesVault).approve(
+                address(vaultGuardians),
+                IERC20(maliciousWethSharesVault).balanceOf(maliciousGuardian)
+            );
+            vaultGuardians.quitGuardian();
+        }
+        vm.stopPrank();
+
+        uint256 endingMaliciousVGTokenBalance = vgToken.balanceOf(maliciousGuardian);
+        uint256 endingRegularVGTokenBalance = vgToken.balanceOf(guardian);
+        console.log("Malicious vgToken Balance:\t", endingMaliciousVGTokenBalance);
+        console.log("Regular vgToken Balance:\t", endingRegularVGTokenBalance);
+    }
+```
+</details>
+
+**Recommended Mitigation:** 
+
+1. Mint vgTokens on a vesting schedule after a user becomes a guardian.
+2. Burn vgTokens when a guardian quits.
+
+
+### [H-5] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
 
 **Description:** 
 
@@ -867,7 +950,7 @@ Use only the remaining base tokens for amountADesired:
 ```
 
 
-### [H-5] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
+### [H-6] No slippage protection in uniswap operations in `UniswapAdapter` can lead to loss of funds due to price changes  
 
 **Description:** 
 
@@ -1294,7 +1377,7 @@ Use this values to assign them to `amountAMin` / `amountBMin` for `addLiquidity`
 Same for `removeLiquidity`.
 
 
-### [H-6] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
+### [H-7] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
 
 **Description:** In `VaultShares` in constructor, is fetched the uniswap LP token. 
 
@@ -1411,7 +1494,7 @@ Other solutions, but less ideal:
 
 
 
-### [H-7] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
+### [H-8] `nonReentrant` is not the First Modifier in `VaultShares` which makes the functions vulnerable to reentrancy attacks
 
 **Description:** 
 
@@ -1462,7 +1545,7 @@ function rebalanceFunds() public nonReentrant isActive divestThenInvest {}
 ```
 
 
-### [H-8] Using `block.timestamp` for swap deadline offers no protection
+### [H-9] Using `block.timestamp` for swap deadline offers no protection
 
 **Description:** 
 
@@ -1860,6 +1943,61 @@ Move nonReentrant to be the first modifier, in order to guard against reentrancy
 ```js
 function rebalanceFunds() public nonReentrant onlyGuardian isActive divestThenInvest  {}
 ```
+
+### [M-4] Potentially incorrect voting period and delay in governor may affect governance
+
+**Description:**  The `VaultGuardianGovernor` contract, based on [OpenZeppelin Contract's Governor](https://docs.openzeppelin.com/contracts/5.x/api/governance#governor), implements two functions to define the voting delay (`votingDelay`) and period (`votingPeriod`). The contract intends to define a voting delay of 1 day, and a voting period of 7 days. It does it by returning the value `1 days` from `votingDelay` and `7 days` from `votingPeriod`. In Solidity these values are translated to number of seconds.
+
+However, the `votingPeriod` and `votingDelay` functions, by default, are expected to return number of blocks. Not the number seconds. 
+
+**Impact:** Voting period and delay will be far off what the developers intended, which could potentially affect the intended governance mechanics.
+
+**Recommended Mitigation:** 
+
+Consider updating the functions as follows:
+
+```diff
+function votingDelay() public pure override returns (uint256) {
+-   return 1 days;
++   return 7200; // 1 day
+}
+
+function votingPeriod() public pure override returns (uint256) {
+-   return 7 days;
++   return 50400; // 1 week
+}
+```
+
+### [M-5] Low quorum threshold can lead to governance takeover
+
+**Description:** 
+
+The VaultGuardianGovernor contract sets the quorum requirement to only 4% of total votes:
+
+```js
+GovernorVotesQuorumFraction(4);
+```
+
+This means that any proposal reaching just 4% participation is considered valid.
+In scenarios where token distribution is uneven or voter participation is low, a small minority (or a single large holder) could unilaterally pass proposals, including malicious ones.
+
+**Impact:** Can affect protocol safety. A 4% quorum threshold makes it feasible for a small coalition or single actor to pass governance actions that alter protocol-critical parameters.
+
+**Proof of Concept:**
+
+If a tokenholder controls 5% of the governance token supply, they can:
+
+1. Submit a proposal (if proposal threshold allows it).
+
+2. Vote it through with minimal participation.
+
+3. Execute it, gaining control over protocol behavior.
+
+**Recommended Mitigation:** 
+
+Increase quorum fraction to at least 10–20% depending on token distribution and participation expectations.
+
+Introduce a proposal threshold to prevent low-stake or spam proposals.
 
 
 ### [L-1] Unused event in `VaultGuardians`
@@ -2429,6 +2567,21 @@ The function title contains a misspelled word(missing an "i"): Liquidty, instead
         return address(i_uniswapLiquidityToken);
     }
 ```
+
+
+### [I-5] Missing mechanism for adding new investment platforms
+
+**Description:**
+
+The README file states that the project can add new investment strategies, but there is no function or mechanism to allow this. 
+
+"The protocol is upgradeable so that if any of the platforms in the investable universe change, or we want to add more, we can do so."
+
+In the current version, there is only the posibility to update the investment strategy/allocation.
+
+**Impact:** Misleading description of the protocol abilities.
+
+**Recommended Mitigation:** Consider removing the part that states that the protocol can add new investment platforms or implement a mechanism that allows new investment platforms to be safely added.
 
 
 ### [G-1] Functions marked `public` are not used internally

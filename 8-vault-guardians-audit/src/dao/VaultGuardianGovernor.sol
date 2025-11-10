@@ -17,14 +17,16 @@ contract VaultGuardianGovernor is
     )
         Governor("VaultGuardianGovernor")
         GovernorVotes(_voteToken)
-        // @audit Isn't 4% too low? Can someone with a 3-4% allocation make bad intended proposals and execute them?
+        // w@audit-issue Isn't 4% too low? Can someone with a 3-4% allocation make bad intended proposals and execute them?
         GovernorVotesQuorumFraction(4)
     {}
 
+    // w@audit-issue Returns days instead of blocks, Solidity reads seconds => different return value
     function votingDelay() public pure override returns (uint256) {
         return 1 days;
     }
 
+    // w@audit-issue Returns days instead of blocks, Solidity reads seconds => different return value
     function votingPeriod() public pure override returns (uint256) {
         return 7 days;
     }
