@@ -6,10 +6,13 @@ import {NetworkConfig} from "./NetworkConfig.s.sol";
 import {VaultGuardians} from "../src/protocol/VaultGuardians.sol";
 import {VaultGuardianGovernor} from "../src/dao/VaultGuardianGovernor.sol";
 import {VaultGuardianToken} from "../src/dao/VaultGuardianToken.sol";
+import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 
 contract DeployVaultGuardians is Script {
+    NetworkConfig public networkConfig;
+
     function run()
-        external
+        public
         returns (
             VaultGuardians,
             VaultGuardianGovernor,
@@ -17,7 +20,7 @@ contract DeployVaultGuardians is Script {
             NetworkConfig
         )
     {
-        NetworkConfig networkConfig = new NetworkConfig(); // This comes with our mocks!
+        networkConfig = new NetworkConfig(); // This comes with our mocks!
         // (address aavePool, address uniswapRouter, address weth, address usdc, address link) =
         //     networkConfig.activeNetworkConfig();
 
@@ -45,6 +48,22 @@ contract DeployVaultGuardians is Script {
         vm.stopBroadcast();
         return (vaultGuardians, vgGovernor, vgToken, networkConfig);
     }
+
+    // function runWithConfig(
+    //     NetworkConfig customConfig
+    // )
+    //     public
+    //     returns (
+    //         VaultGuardians,
+    //         VaultGuardianGovernor,
+    //         VaultGuardianToken,
+    //         NetworkConfig
+    //     )
+    // {
+    //     networkConfig = customConfig;
+
+    //     return run();
+    // }
 
     // add this to be excluded from coverage report
     function test() public {}
