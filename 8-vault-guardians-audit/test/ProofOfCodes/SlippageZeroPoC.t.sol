@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {VaultShares} from "../../src/protocol/VaultShares.sol";
 import {IVaultShares, IVaultData} from "../../src/interfaces/IVaultShares.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";

@@ -20,7 +20,7 @@ seed = "0x0"
 [invariant]
 runs = 100
 depth = 128
-seed = "0x5"
+#seed = "0x5"
 fail_on_revert = true
 show_metrics = true
 

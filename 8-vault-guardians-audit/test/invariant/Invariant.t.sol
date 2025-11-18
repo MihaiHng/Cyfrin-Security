@@ -90,14 +90,13 @@ contract Invariant is StdInvariant, Test, Base_Test_Invariant {
         console2.log("Aave invested:", aaveInvested);
         console2.log("Uniswap invested:", uniswapInvested);
 
+        // Asserts that totalAssets() doesn't account for the entire amount invested, but only for the holding allocation which in this case is 50%, the other 50% is invested(Aave+Uniswap)
+        // Here the delta is 50% of the total amount invested in the vault, because 50% of the amount is invested in Aave(25%) and Uniswap(25%)
         assertApproxEqAbs(
             vaultTotal,
             internalHoldings + invested,
             (internalHoldings + invested) / 2
         );
-
-        // uint256 netDeposits = handler.getNetDeposits();
-        //assertGe(internalHoldings + invested + 1e6, handler.getNetDeposits());
     }
 
     function getInvestedAmounts()

@@ -314,6 +314,34 @@ contract VaultGuardiansBaseTest is Base_Test {
         vm.stopPrank();
     }
 
+    function testTotalAssetsReturnsIncorrectAmount()
+        public
+        hasGuardian
+        hasTokenGuardian
+    {
+        // user deposits usdc
+        usdc.mint(mintAmount, user);
+        vm.startPrank(user);
+        usdc.approve(address(usdcVaultShares), mintAmount);
+        usdcVaultShares.deposit(mintAmount, user);
+        vm.stopPrank();
+
+        uint256 expectedVaultBalance = mintAmount;
+        uint256 actualVaultBalance = usdcVaultShares.totalAssets();
+        uint256 delta = (expectedVaultBalance * 6) / 10; // missing deposit amount aprox. 60% -> 25% Aave + 25% Uniswap + ~10%(fees + dilution)
+
+        console.log("Expected Vault Balance: ", expectedVaultBalance);
+        console.log("Actual Vault Balance: ", actualVaultBalance);
+        console.log("Expected difference in vault amount: ", delta);
+        console.log(
+            "Actual difference in vault amount: ",
+            expectedVaultBalance - actualVaultBalance
+        );
+
+        // Shows that there is a significant difference between expected and actual vault amount, aprox. 60%
+        assertApproxEqAbs(actualVaultBalance, expectedVaultBalance, delta);
+    }
+
     /*//////////////////////////////////////////////////////////////
                                VIEW TESTS
     //////////////////////////////////////////////////////////////*/

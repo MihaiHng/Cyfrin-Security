@@ -9,7 +9,104 @@
 **Recommended Mitigation:** 
 
 
-### [H-2] Missing decimal normalization causes reverts when supplying non-18-decimal tokens (USDC) to Aave
+## High
+
+
+### [H-1] totalAssets() ignores all invested funds which leads to severe disruptions of protocol functionality
+
+**Description:** OpenZeppelin's ERC4626 implementation of `totalAssets()` only checks for the vault balance, not taking into consideration invested amounts, which left the vault.
+
+```js
+function totalAssets() public view virtual returns (uint256) {
+    return _asset.balanceOf(address(this));
+}
+```
+
+Vault moves 50% of user funds out into: Aave (25%) + Uniswap LP (25%)
+
+`totalAssets()` will return just 50% of the real correct value.
+
+**Impact:** 
+
+Other functions rely on `totalAssets()` return value to calculate different return values:
+
+- `convertToShares`
+- `convertToAssets`
+- `previewWithdraw`
+- `previewRedeem`
+- `maxWithdraw`
+- `maxRedeem`
+- `withdraw`
+- `deposit`
+
+Returning an incorrect value will have a severe economic and functional impact on the protocol:
+
+1. Users receive too many shares on deposit, if `totalAssets()` is too small (because invested assets are ignored),
+then shares become extremely cheap → users get overminted.
+
+2. Withdrawals and redeem become corrupted because they use `convertToShares` and `convertToAssets`, which use `totalAssets()`
+
+3. Governance votes using share balances become inaccurate 
+
+Probably more...
+
+**Proof of Concept:**
+
+- Example scenario:
+
+1. User deposits 100 ether
+2. 50 ether gets automatically invested in Aave(25 ether) + Uniswap(25 ether)
+3. `totalAssets()` is called as consequence of a protocol action
+4. `totalAssets()` returns only 50% of the total amount since the vault only accounts for the holding allocation(50%)
+5. Calculations are erroneous, state is incorrect and functionality is disrupted.
+
+Proof of Code:
+
+- Add this test in test/unit/concrete/VaultGuardiansBaseTest.t.sol:
+
+<details>
+<summary>Code</summary>
+
+```js
+    function testTotalAssetsReturnsIncorrectAmount()
+            public
+            hasGuardian
+            hasTokenGuardian
+        {
+            // user deposits usdc
+            usdc.mint(mintAmount, user);
+            vm.startPrank(user);
+            usdc.approve(address(usdcVaultShares), mintAmount);
+            usdcVaultShares.deposit(mintAmount, user);
+            vm.stopPrank();
+
+            uint256 expectedVaultBalance = mintAmount;
+            uint256 actualVaultBalance = usdcVaultShares.totalAssets();
+            uint256 delta = (expectedVaultBalance * 6) / 10; // missing deposit amount approx. 60% -> 25% Aave + 25% Uniswap + ~10%(fees + dilution)
+
+            console.log("Expected Vault Balance: ", expectedVaultBalance);
+            console.log("Actual Vault Balance: ", actualVaultBalance);
+            console.log("Expected difference in vault amount: ", delta);
+            console.log(
+                "Actual difference in vault amount: ",
+                expectedVaultBalance - actualVaultBalance
+            );
+
+            // Shows that there is a significant difference between expected and actual vault amount, approx. 60%
+            assertApproxEqAbs(actualVaultBalance, expectedVaultBalance, delta);
+        }
+```
+
+</details>
+
+**Recommended Mitigation:** 
+
+1. Override OpenZepelin's ERC4626 `totalAssets()` implementation to include investment amounts
+
+2. Implement a custom function to keep track of total assets in the vault and don't rely on OpenZeppelin's solution
+
+
+### [H-2] Missing decimal normalization causes reverts when supplying non 18 decimal tokens (USDC) to Aave
 
 **Description:** 
 
@@ -24,7 +121,7 @@ In `_aaveInvest()`, the vault passes `amount` directly into Aave’s `supply()` 
         i_aavePool.supply({
             asset: address(asset),
             amount: amount,
-            onBehalfOf: address(this), // decides who get's Aave's aTokens for the investment. In this case, mint it to the vault
+            onBehalfOf: address(this), // decides who gets Aave's aTokens for the investment. In this case, mint it to the vault
             referralCode: 0
         });
     }
@@ -153,7 +250,7 @@ contract AaveDecimalsMismatchNon18TokensPoC is Test {
         console.log("Current Balance:", currentBalance);
 
         uint256 requiredBalance = normalAmount;
-        console.log("Requiered Balance:", requiredBalance);
+        console.log("Required Balance:", requiredBalance);
 
         // Expect revert because trying to transfer 1e18 USDC
         vm.expectRevert(
@@ -201,7 +298,7 @@ Add proper decimal scaling before interacting with Aave:
 ```
 
 
-### [H-3] Missing LP and Counterparty Token Approvals in _uniswapDivest → Redeem DoS + Locked funds
+### [H-3] Missing counterparty token approvals in _uniswapDivest result in redeem DoS and locked funds
 
 **Description:** 
 
@@ -451,7 +548,7 @@ contract MissingApprovalsUniswapDivestPoC_Test is Test {
         console.log("Current allowance:", currentAllowance);
         console.log("Required allowance:", requiredAllowance);
 
-        // If we call redeem(), expectRevert wont's be able to pick up the revert, because it happens during a nested call
+        // If we call redeem(), expectRevert won't be able to pick up the revert, because it happens during a nested call
         // expectRevert checks the top level call for revert
         // removeLiquidity() and swapExactTokensForTokens() are nested calls inside redeem() which is the top call, that's why removeLiquidity() is simulated separatelly here
 
@@ -490,7 +587,7 @@ Add safe increase allowance for LP and Counterparty Token
     function _uniswapDivest(IERC20 token, uint256 liquidityAmount) internal returns (uint256 amountOfAssetReturned) {
         IERC20 counterPartyToken = token == i_weth ? i_tokenOne : i_weth;
 
-        // Approve uniswapRouter to tranfer LP from VaultShares
+        // Approve uniswapRouter to transfer LP from VaultShares
 +       if (
 +            s_uniswapLP.allowance(address(this), address(i_uniswapRouter)) == 0
 +          ) {
@@ -512,7 +609,7 @@ Add safe increase allowance for LP and Counterparty Token
         s_pathArray = [address(counterPartyToken), address(token)];
 
         
-        // Approve uniswapRouter to tranfer counterPartyToken from VaultShares
+        // Approve uniswapRouter to transfer counterPartyToken from VaultShares
 +       if (
 +            counterPartyToken.allowance(address(this), address(i_uniswapRouter)) == 0
 +          ) {
@@ -534,7 +631,7 @@ Add safe increase allowance for LP and Counterparty Token
     }
 ```
 
-### [H-4] Guardians have no restrictions on minting `vgToken`s and can accumulate high amoounts to take over DAO, steal DAO fees and set parameters for own interest
+### [H-4] Guardians have no restrictions on minting `vgToken` and can accumulate high amounts to take over DAO, steal DAO fees and set parameters for own interest
 
 **Description:** Becoming a guardian is repaied by receiving Vault Guardian Tokens (vgTokens). Whenever a guardian successfully calls `VaultGuardiansBase::becomeGuardian` or `VaultGuardiansBase::becomeTokenGuardian`, `_becomeTokenGuardian` is executed, which mints the caller `i_vgToken`. 
 
@@ -618,7 +715,7 @@ Place the following code into `VaultGuardiansBaseTest.t.sol`
 2. Burn vgTokens when a guardian quits.
 
 
-### [H-5] Double Accounting of Swap Amount Leads to Excess Token Spending → Fund Loss / DoS
+### [H-5] Double accounting of swap amount leads to excess token spending and fund loss or DoS
 
 **Description:** 
 
@@ -894,7 +991,7 @@ contract SlippageZeroMin_PoC_Test is Test {
         uint256 shares = vault.deposit(depositAmt, user);
         vm.stopPrank();
 
-        // Adding the uniswap approvals that are misssing in the original code
+        // Adding the uniswap approvals that are missing in the original code
         vm.startPrank(address(vault));
         lp.approve(address(router), type(uint256).max);
         tokenOne.approve(address(router), type(uint256).max);
@@ -1377,7 +1474,7 @@ Use this values to assign them to `amountAMin` / `amountBMin` for `addLiquidity`
 Same for `removeLiquidity`.
 
 
-### [H-7] Uniswap LP token can be `address(0)`, when `vault` asset is `weth`(weth/weth pair), causing irrecoverable functional failure and potential token loss during vault operations.
+### [H-7] Uniswap LP token can be `address(0)` when vault asset is `weth`(weth/weth pair), causing functional failure and potential token loss.
 
 **Description:** In `VaultShares` in constructor, is fetched the uniswap LP token. 
 
@@ -1606,7 +1703,11 @@ For high-value transactions:
 Send the transaction via Flashbots Protect / MEV-Blocker RPC or similar RPC relayers.
 These systems submit your transaction directly to block builders privately (not via the public mempool), preventing front-running and sandwiching.
 
-### [M-1] Using unsafe ERC20 approve() operation in AaveAdapter.sol, UniswapAdapter.sol and VaultGuardiansBase.sol can result in stolen assets
+
+## Medium
+
+
+### [M-1] Using unsafe ERC20 approve operation can result in stolen assets
 
 **Description:** The ERC20 approve() function sets the spender’s allowance to a specific amount — but if there was already an allowance, it overwrites it. This creates a race condition known as the ERC20 approve front-running issue:
 If someone can front-run your transaction between two approvals (e.g., approve(100) → approve(200)), they might use the old allowance before it’s updated.
@@ -1649,7 +1750,7 @@ If your vault ever interacts with other contracts dynamically (like different po
 So it’s still best practice to always use SafeERC20 helpers for approvals.
 
 
-### [M-1] Centralization Risk
+### [M-2] Centralization Risk
 
 **Description:** These functions are using an access control library that put the power to make changes in the hands of a single entity, which is a centralization issue.
 
@@ -1697,9 +1798,9 @@ So it’s still best practice to always use SafeERC20 helpers for approvals.
 4. Use of AccessControl library from OpenZeppelin, which restricts the access to a group of addresses instead a single one.
 
 
-### [M-2] Missing validation for addresses(0) in `VaultShares` constructor (aToken / Uniswap pair) 
+### [M-3] Missing validation for address(0) in `VaultShares` constructor 
 
-**Description:** In `VaultShares` constructor `aToken` and `Uniswap` pair are assigned by making external calls to aave getReserveData, respectivelly uniswap factory. 
+**Description:** In `VaultShares` constructor `aToken` and `Uniswap` pair are assigned by making external calls to aave getReserveData, respectively uniswap factory. 
 
 - Aave: aTokenAddress == address(0)
 
@@ -1917,7 +2018,7 @@ constructor(
 ```
 
 
-### [M-3] Anyone Can Force Rebalances: Unrestricted entrypoint + reentrancy exposure → Value leakage and fund instability
+### [M-4] Anyone can force rebalances causing value leakage and fund instability
 
 **Description:** 
 
@@ -1929,7 +2030,7 @@ The rebalanceFunds() function is declared as public and can be called by any add
 
 Because it lacks access control, anyone can repeatedly trigger full rebalance cycles. Each rebalance incurs swap fees, gas costs, and potential slippage, negatively affecting vault performance.
 
-Also, this function is already affected by the separate high-severity issue “nonReentrant is not the first modifier”, which allows reentrancy during the divestThenInvest phase — amplifying the impact of this unrestricted entrypoint.
+Also, this function is already affected by the separate high-severity issue [H-8] “nonReentrant is not the first modifier”, which allows reentrancy during the divestThenInvest phase — amplifying the impact of this unrestricted entrypoint.
 
 **Impact:** 
 
@@ -1944,7 +2045,7 @@ Move nonReentrant to be the first modifier, in order to guard against reentrancy
 function rebalanceFunds() public nonReentrant onlyGuardian isActive divestThenInvest  {}
 ```
 
-### [M-4] Potentially incorrect voting period and delay in governor may affect governance
+### [M-5] Potentially incorrect voting period and delay in governor may affect governance
 
 **Description:**  The `VaultGuardianGovernor` contract, based on [OpenZeppelin Contract's Governor](https://docs.openzeppelin.com/contracts/5.x/api/governance#governor), implements two functions to define the voting delay (`votingDelay`) and period (`votingPeriod`). The contract intends to define a voting delay of 1 day, and a voting period of 7 days. It does it by returning the value `1 days` from `votingDelay` and `7 days` from `votingPeriod`. In Solidity these values are translated to number of seconds.
 
@@ -1968,7 +2069,7 @@ function votingPeriod() public pure override returns (uint256) {
 }
 ```
 
-### [M-5] Low quorum threshold can lead to governance takeover
+### [M-6] Low quorum threshold can lead to governance takeover
 
 **Description:** 
 
@@ -1998,6 +2099,9 @@ If a tokenholder controls 5% of the governance token supply, they can:
 Increase quorum fraction to at least 10–20% depending on token distribution and participation expectations.
 
 Introduce a proposal threshold to prevent low-stake or spam proposals.
+
+
+## Low
 
 
 ### [L-1] Unused event in `VaultGuardians`
@@ -2074,7 +2178,7 @@ The consequence of this incompatibility is that contracts compiled with Solidity
 **Recommended Mitigation:** To mitigate this issue and ensure broader compatibility with various EVM-based L2 solutions, it is recommended to downgrade the Solidity compiler version used in the smart contracts to 0.8.19. This version does not utilize the PUSH0 opcode and therefore maintains compatibility with a wider range of L2 solutions, including ZKsync.
 
 
-### [L-5] No `address(0)` check in `VaultGuardiansBase::_becomeTokenGuardian` for `tokenVault` and `token`
+### [L-5] No address(0) check in VaultGuardiansBase _becomeTokenGuardian for tokenVault and token
 
 **Description:** These values are passed as parameters, generated by the calling functions (becomeGuardian and becomeTokenGuardian).
 
@@ -2103,11 +2207,11 @@ function _becomeTokenGuardian(
     }
 ```
 
-### [L-6] In `VaultGuardiansBase::_becomeTokenGuardian` the guardian receives its `vgToken` before the vault creation is confirmed introducing a risk of reentrancy
+### [L-6] The guardian receives its `vgToken` before the vault creation is confirmed introducing a risk of reentrancy
 
 **Description:** In order to become a vault guardian a user has to deposit a stake amount `s_guardianStakePrice`. In exchange for this stake amount the vault guardian receives the same amount of `vgToken`, which they use to get their stake amount back when they quit being a vault guardian. 
 
-Here the code doesn't follow the Check-Effect-Interaction(CEI) principle and the vault guardian receives the `vgToken` before the tokenVault creation is confirmed successful.
+Here in `VaultGuardiansBase::_becomeTokenGuardian`, the code doesn't follow the Check-Effect-Interaction(CEI) principle and the vault guardian receives the `vgToken` before the tokenVault creation is confirmed successful.
 
 ```js
 function _becomeTokenGuardian(
@@ -2178,11 +2282,11 @@ function _becomeTokenGuardian(
     }
 ```
 
-### [L-7] In `VaultGuardiansBase::_becomeTokenGuardian` an event is emitted `GuardianAdded` before the vault creation is confirmed leading to a false pozitive in the off-chain information flow
+### [L-7] A GuardianAdded event is emitted  before the vault creation is confirmed leading to a false positive in the off-chain information flow
 
-**Description:** In order to become a vault guardian a user has to deposit a stake amount `s_guardianStakePrice`. The event `GuardianAdded` is emmited before checking if the deposit was actually successful. This can lead to inconsistent information for the event readers.
+**Description:** In order to become a vault guardian a user has to deposit a stake amount `s_guardianStakePrice`. The event `GuardianAdded` is emitted before checking if the deposit was actually successful. This can lead to inconsistent information for the event readers.
 
-Here the code doesn't follow the Check-Effect-Interaction(CEI) principle and the event is emitted before the state actually changes.
+Here, in `VaultGuardiansBase::_becomeTokenGuardian` the code doesn't follow the Check-Effect-Interaction(CEI) principle and the event is emitted before the state actually changes.
 
 ```js
 function _becomeTokenGuardian(
@@ -2258,9 +2362,9 @@ function _becomeTokenGuardian(
     }
 ```
 
- ### [L-8] Incorrect NAME & SYMBOL in `VaultGuardianBase::becomeTokenGuardian` when creating tokenVault for i_TokenTwo
+ ### [L-8] Incorrect NAME and SYMBOL when creating tokenVault for i_TokenTwo
 
-**Description:** When an user calls becomeTokenGuardian a new tokenVault is created for the token the guardian has chosen. 
+**Description:** In `VaultGuardianBase::becomeTokenGuardian` when an user calls becomeTokenGuardian a new tokenVault is created for the token the guardian has chosen. 
 There are two accepted tokens, i_tokenOne and i_tokenTwo, with different name and symbol. But the function assigns `TOKEN_ONE_VAULT_NAME` & `TOKEN_ONE_VAULT_SYMBOL` for both token vaults, which is misleading to off-chain indexers.
 
 ```js
@@ -2315,9 +2419,9 @@ else if (address(token) == address(i_tokenTwo)) {
 )}
 ```
 
-### [L-9] Return value not assigned to named return variable in `AaveAdapter::_aaveDivest`
+### [L-9] Return value not assigned to named return variable in _aaveDivest
 
-**Description:** `_aaveDivest` calls `withdraw` on the Aave pool to retrieve the invested amount. This withdraw call returns a uint256 value, the received amount. `_aaveDivest` has declared a return variable `amountOfAssetReturned`, but the Aave pool withraw call return value it is never assigned to it. `_aaveDivest` will always return 0 in this case.
+**Description:** In `AaveAdapter` `_aaveDivest` calls `withdraw` on the Aave pool to retrieve the invested amount. This withdraw call returns a uint256 value, the received amount. `_aaveDivest` has declared a return variable `amountOfAssetReturned`, but the Aave pool withdraw call return value it is never assigned to it. `_aaveDivest` will always return 0 in this case.
 
 ```js
 function _aaveDivest(
@@ -2398,9 +2502,9 @@ function _uniswapDivest(IERC20 token, uint256 liquidityAmount) internal returns 
     }
 ```
 
-### [L-11] Misleading/Incorrect event emision in `VaultGuardians::updateGuardianAndDaoCut` 
+### [L-11] Misleading/Incorrect event emision in updateGuardianAndDaoCut
 
-**Description:** The event emmited doesn't correctly describe the function action. 
+**Description:** In `VaultGuardians::updateGuardianAndDaoCut` the event emitted doesn't correctly describe the function action. 
 The function updates the Guardian and Dao fee, but the event is stating "UpdatedStakePrice".
 
 ```js
@@ -2408,7 +2512,7 @@ The function updates the Guardian and Dao fee, but the event is stating "Updated
      * @notice Updates the percentage shares guardians & Daos get in new vaults
      * @param newCut the new cut
      * @dev this value will be divided by the number of shares whenever a user deposits into a vault
-     * @dev historical vaults will not have their cuts updated, only vaults moving forward
+     * @dev historical vaults will not have their cuts updated, only future vaults 
      */
     function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
         s_guardianAndDaoCut = newCut;
@@ -2421,7 +2525,7 @@ The function updates the Guardian and Dao fee, but the event is stating "Updated
 
 **Recommended Mitigation:** 
 
-Consider using a correctly describing event title, like the already exisiting and unused event "UpdatedFee".
+Consider using a correctly describing event title, like the already existing and unused event "UpdatedFee".
 
 ```diff
 function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
@@ -2431,11 +2535,11 @@ function updateGuardianAndDaoCut(uint256 newCut) external onlyOwner {
     }
 ```
 
-### [L-12] Ambiguous Guardian and DAO Cut Calculation: Unclear divisor logic → Misleading configuration in `VaultShares::deposit`
+### [L-12] Ambiguous guardian and DAO cut calculation can lead to misleading configuration 
 
 **Description:** 
 
-The guardian and DAO fee is calculated using shares / i_guardianAndDaoCut, where i_guardianAndDaoCut is set to 1000. This treats the value as a divisor rather than a percentage or basis-point ratio. The naming (“cut”) suggests a proportional fee, which can confuse or lead to incorrect future updates. Additionally, the same fraction is minted twice — once for the guardian and once for the DAO — doubling the total effective fee.
+In `VaultShares::deposit` the guardian and DAO fee is calculated using shares / i_guardianAndDaoCut, where i_guardianAndDaoCut is set to 1000. This treats the value as a divisor rather than a percentage or basis-point ratio. The naming (“cut”) suggests a proportional fee, which can confuse or lead to incorrect future updates. Additionally, the same fraction is minted twice — once for the guardian and once for the DAO — doubling the total effective fee.
 
 ```js
 _mint(i_guardian, shares / i_guardianAndDaoCut);
@@ -2463,7 +2567,7 @@ If it is meant to represent a fee in basis points, use:
 Otherwise, rename it to guardianAndDaoDivisor and document that it is used as a divisor for clarity.
 
 
-### [L-13] Missing Event Emission on User Deposit in `VaultShares::deposit`
+### [L-13] Missing event emission on user deposit 
 
 **Description:** 
 
@@ -2490,6 +2594,7 @@ Emit a dedicated event when shares are minted to the guardian and DAO, on deposi
 
 This improves transparency and facilitates accurate monitoring of fee allocations.
 
+## Informational
 
 ### [I-1] Unused interfaces `IInvestableUniverseAdapter` and `IVaultGuardians` with commented-out functions
 
@@ -2510,9 +2615,9 @@ This improves transparency and facilitates accurate monitoring of fee allocation
 **Recommended Mitigation:** Aim to get test coverage up to over 90% for all files and improve Branch testing.
 
 
-### [I-3] No check on return value in `AaveAdapter::_aaveDivest` 
+### [I-3] No check on return value in _aaveDivest
 
-**Description:** `_aaveDivest` defines a named return value which is never assigned(see L-9) and never checked 
+**Description:** In `AaveAdapter`, `_aaveDivest` defines a named return value which is never assigned(see L-9) and never checked 
 
 ```js
 function _aaveDivest(
@@ -2552,11 +2657,11 @@ function _aaveDivest(
 Alternatively, remove the unused return value from the function signature to avoid confusion.
 
 
-### [I-4] Typo in function title in `VaultShares::getUniswapLiquidtyToken`
+### [I-4] Typo in function title in getUniswapLiquidtyToken
 
 **Description:** 
 
-The function title contains a misspelled word(missing an "i"): Liquidty, instead of Liquidity
+In `VaultShares` the function title contains a misspelled word(missing an "i"): Liquidty, instead of Liquidity
 
 **Impact:** No runtime impact, can create confusion
 
@@ -2583,6 +2688,7 @@ In the current version, there is only the posibility to update the investment st
 
 **Recommended Mitigation:** Consider removing the part that states that the protocol can add new investment platforms or implement a mechanism that allows new investment platforms to be safely added.
 
+## Gas
 
 ### [G-1] Functions marked `public` are not used internally
 
