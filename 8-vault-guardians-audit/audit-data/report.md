@@ -103,6 +103,8 @@ Assisting Auditors:
 
 We are making all efforts to find as many vulnerabilities in the code in the given time period, but we are not holding any  responsibilities for the the findings provided in this document. A security audit is not an endorsement of the underlying business or product. The audit was time-boxed and the review of the code was solely on the security aspects of the solidity implementation of the contracts.
 
+\vspace{10em}
+
 # Risk Classification
 
 |            |        | Impact |        |     |
