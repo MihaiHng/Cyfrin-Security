@@ -1,12 +1,12 @@
 ---
 title: Vault Guardians Audit Report
 author: mhng
-date: November 18, 2025
+date: November 19, 2025
 header-includes:
   - \usepackage{titling}
   - \usepackage{graphicx}
 ---
-<!-- \begin{titlepage}
+\begin{titlepage}
     \centering
     \begin{figure}[h]
         \centering
@@ -17,31 +17,10 @@ header-includes:
     \vspace{1cm}
     {\Large Version 0.1\par}
     \vspace{2cm}
-    {\Large\itshape Cyfrin.io\par}
+    {\Large\itshape \par}
     \vfill
     {\large \today\par}
-\end{titlepage} -->
-
-\begin{titlepage}
-    \centering
-
-    \begin{center}
-        \includegraphics[width=0.5\textwidth]{logo.pdf}
-    \end{center}
-    
-    \vspace*{2cm}
-
-    {\Huge\bfseries Vault Guardians Audit Report\par}
-    \vspace{1cm}
-    {\Large Version 0.1\par}
-    \vspace{2cm}
-    {\Large\itshape Cyfrin.io\par}
-    
-    \vfill
-    {\large \today\par}
-
 \end{titlepage}
-
 
 \maketitle
 
@@ -2840,7 +2819,13 @@ This improves transparency and facilitates accurate monitoring of fee allocation
 
 ### [I-2] Insufficient test coverage 
 
-![alt text](image.png)
+<!-- ![alt text](image.png) -->
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.7\linewidth]{image.png}
+\caption{alt text}
+\end{figure}
+
 
 **Recommended Mitigation:** Aim to get test coverage up to over 90% for all files and improve Branch testing.
 
